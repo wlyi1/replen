@@ -1,0 +1,7 @@
+.git
+.claude
+.agents
+*.md
+*.log
+__pycache__
+*.pyc
