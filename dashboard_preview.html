@@ -1,0 +1,2154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Replenishment Dashboard — Inofarma</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+  <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+  <script src="./data/ordering_data.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
+
+
+  <style>
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+    :root{
+      --bg:#F5F3EF;--surface:#FFFFFF;--border:#E2DDD5;--text:#1A1A18;--muted:#6B6860;
+      --accent:#2D6A4F;--accent-md:#40916C;--accent-lt:#D8F3DC;--accent-xl:#F0FAF2;
+      --sidebar:#1B1B17;--sidebar-hover:rgba(255,255,255,.05);--sidebar-active:rgba(255,255,255,.07);--sidebar-line:#4C9172;
+      --warn:#D97706;--warn-lt:#FEF3C7;--danger:#C0392B;--danger-lt:#FEE2E2;
+      --purple:#6D28D9;--purple-lt:#EDE9FE;--orange:#EA580C;--orange-lt:#FFEDD5;
+      --blue:#1D4ED8;--blue-lt:#EFF6FF;--gray-lt:#F9F8F6;
+      --yellow:#CA8A04;--yellow-lt:#FEF9C3;
+      --shadow:0 1px 3px rgba(0,0,0,.06);--r:10px;--r-sm:6px;
+    }
+    /* App shell: the whole page is pinned to exactly one viewport tall and never scrolls itself —
+       only .page-body scrolls internally. Previously the sidebar used position:sticky + height:100vh
+       while the page (body) scrolled underneath it; that only *looks* full-height during live interactive
+       scrolling because sticky keeps re-pinning it every frame. The sidebar's actual box was always just
+       100vh — with a few thousand SKU rows the document is many viewports tall, so anything that renders
+       the page without simulating scroll frame-by-frame (a full-page screenshot, printing, some capture
+       tools) exposes the page background below that 100vh mark. Fixing the shell height removes the
+       document-level scroll entirely, so there's no "beyond 100vh" for the sidebar to fall short of.       */
+    html,body{overflow-x:hidden;height:100%;}
+    body{font-family:Inter,sans-serif;background:var(--bg);color:var(--text);font-size:14px;line-height:1.5;display:flex;height:100vh;overflow:hidden;}
+    .sidebar{width:220px;flex-shrink:0;background:var(--sidebar);display:flex;flex-direction:column;height:100%;overflow-y:auto;}
+    .sidebar-brand{padding:20px 16px 16px;border-bottom:1px solid rgba(255,255,255,.08);display:flex;align-items:center;gap:10px;}
+    .brand-icon{width:32px;height:32px;background:var(--accent-md);border-radius:8px;display:flex;align-items:center;justify-content:center;}
+    .brand-icon svg{width:17px;height:17px;color:#fff;}
+    .brand-name{color:#fff;font-weight:700;font-size:14px;}
+    .brand-sub{color:rgba(255,255,255,.4);font-size:10px;}
+    .sidebar-section{padding:18px 10px 5px;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:rgba(255,255,255,.3);}
+    .nav-item{display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:7px;margin:1px 8px;color:rgba(255,255,255,.58);font-size:12px;font-weight:500;cursor:pointer;transition:all .15s;user-select:none;position:relative;}
+    .nav-item:hover{background:var(--sidebar-hover);color:rgba(255,255,255,.88);}
+    /* Active state reads as a quiet accent line, not a filled block — keeps the green meaning "action/emphasis" instead of decorating the whole nav */
+    .nav-item.active{background:var(--sidebar-active);color:#fff;font-weight:600;}
+    .nav-item.active::before{content:"";position:absolute;left:-8px;top:6px;bottom:6px;width:2px;background:var(--sidebar-line);}
+    .nav-item svg{width:16px;height:16px;flex-shrink:0;opacity:.9;}
+    .sidebar-footer{margin-top:auto;padding:14px;border-top:1px solid rgba(255,255,255,.08);font-size:10px;color:rgba(255,255,255,.3);}
+    .content{flex:1;display:flex;flex-direction:column;min-width:0;height:100%;}
+    .topbar{min-height:56px;background:var(--surface);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;padding:10px 28px;flex-wrap:wrap;gap:10px;row-gap:8px;flex-shrink:0;}
+    .topbar-title{font-size:15px;font-weight:700;letter-spacing:-.3px;}
+    .topbar-sub{font-size:11px;color:var(--muted);}
+    .topbar-right{display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:flex-end;}
+    /* The one scrolling region in the whole app — everything else (sidebar, topbar) is fixed height */
+    .page-body{padding:22px 28px;flex:1;min-height:0;overflow-y:auto;}
+    .btn{display:inline-flex;align-items:center;gap:7px;padding:8px 14px;border-radius:var(--r-sm);font-family:inherit;font-size:12px;font-weight:600;cursor:pointer;border:none;transition:all .15s;outline:none;}
+    .btn:active{transform:scale(.98);}
+    .btn-primary{background:var(--accent);color:#fff;}.btn-primary:hover{background:#245a42;}
+    .btn-primary:disabled{background:#74b49b;cursor:not-allowed;transform:none;}
+    .btn-ghost{background:transparent;color:var(--muted);border:1px solid var(--border);}.btn-ghost:hover{background:var(--gray-lt);color:var(--text);}
+    .btn-danger{background:transparent;color:var(--danger);border:1px solid #FECACA;font-size:11px;padding:4px 9px;}.btn-danger:hover{background:var(--danger-lt);}
+    .btn-csv{background:#EFF6FF;color:#1D4ED8;border:1px solid #BFDBFE;font-size:11px;padding:5px 10px;}.btn-csv:hover{background:#DBEAFE;}
+    .btn-sm{padding:5px 10px;font-size:11px;}
+    @keyframes spin{to{transform:rotate(360deg)}}
+    @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+    .spinner{width:13px;height:13px;border:2px solid rgba(255,255,255,.3);border-top-color:#fff;border-radius:50%;animation:spin .7s linear infinite;}
+    .badge{display:inline-flex;align-items:center;gap:5px;padding:3px 9px;border-radius:99px;font-size:11px;font-weight:600;}
+    .badge-dot{width:6px;height:6px;border-radius:50%;}
+    .badge-success{background:var(--accent-lt);color:#1B4332;}.badge-success .badge-dot{background:var(--accent);}
+    .badge-running{background:#DBEAFE;color:#1E40AF;}.badge-running .badge-dot{background:#3B82F6;animation:pulse 1s infinite;}
+    .badge-failed{background:var(--danger-lt);color:#991B1B;}.badge-failed .badge-dot{background:var(--danger);}
+    .badge-idle{background:var(--gray-lt);color:var(--muted);}.badge-idle .badge-dot{background:#D0D5DD;}
+    /* Flag + SCM pills */
+    .flag-pill{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:99px;font-size:10px;font-weight:700;background:var(--orange-lt);color:var(--orange);border:1px solid #FED7AA;}
+    .flag-pill-off{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:99px;font-size:10px;color:var(--muted);background:var(--gray-lt);}
+    .scm-pill{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:99px;font-size:10px;font-weight:700;background:var(--blue-lt);color:var(--blue);}
+    /* Cards */
+    .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);box-shadow:var(--shadow);overflow:hidden;}
+    .card-header{padding:14px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;}
+    .card-title{font-size:13px;font-weight:700;}
+    .card-body{padding:18px;}
+    /* KPI grid — 5 columns */
+    .kpi-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:18px;}
+    .kpi-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:18px;box-shadow:var(--shadow);}
+    .kpi-icon{width:34px;height:34px;border-radius:8px;display:flex;align-items:center;justify-content:center;margin-bottom:12px;}
+    .kpi-icon svg{width:17px;height:17px;}
+    .kpi-icon.green{background:var(--accent-lt);color:var(--accent);}
+    .kpi-icon.amber{background:var(--warn-lt);color:var(--warn);}
+    .kpi-icon.red{background:var(--danger-lt);color:var(--danger);}
+    .kpi-icon.purple{background:var(--purple-lt);color:var(--purple);}
+    .kpi-icon.orange{background:var(--orange-lt);color:var(--orange);}
+    .kpi-label{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.7px;color:var(--muted);margin-bottom:5px;}
+    .kpi-value{font-size:26px;font-weight:700;letter-spacing:-1px;line-height:1;font-variant-numeric:tabular-nums;}
+    .kpi-value.green{color:var(--accent);}.kpi-value.orange{color:var(--orange);}
+    .kpi-sub{font-size:11px;color:var(--muted);margin-top:5px;}
+    /* Two-column layout */
+    .two-col{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:18px;}
+    /* ABC bars */
+    .abc-rows{display:flex;flex-direction:column;gap:8px;}
+    .abc-row{display:flex;align-items:center;gap:8px;}
+    .abc-label{width:28px;font-size:10px;font-weight:700;color:var(--muted);flex-shrink:0;}
+    .abc-bar-track{flex:1;height:7px;background:var(--bg);border-radius:99px;overflow:hidden;}
+    .abc-bar-fill{height:100%;border-radius:99px;transition:width .5s;}
+    .abc-count{width:26px;text-align:right;font-size:11px;font-weight:600;}
+    .ax{background:#2D6A4F}.ay{background:#40916C}.az{background:#52B788}
+    .bx{background:#74C69D}.by{background:#95D5B2}.bz{background:#B7E4C7}
+    .cx{background:#0EA5E9}.cy{background:#38BDF8}.cz{background:#7DD3FC}
+    .dx{background:var(--warn)}.ex{background:#FCA5A5}
+    /* Status pills */
+    .status-grid{display:flex;flex-wrap:wrap;gap:8px;}
+    .status-pill{display:flex;flex-direction:column;align-items:center;padding:11px 12px;border-radius:var(--r-sm);border:1px solid var(--border);flex:1;min-width:80px;}
+    .sp-label{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;margin-top:3px;}
+    .sp-count{font-size:20px;font-weight:700;letter-spacing:-.5px;}
+    .sp-g{background:var(--accent-xl);border-color:var(--accent-lt)}.sp-g .sp-count{color:var(--accent)}.sp-g .sp-label{color:#2D6A4F}
+    .sp-a{background:var(--warn-lt);border-color:#FDE68A}.sp-a .sp-count{color:var(--warn)}.sp-a .sp-label{color:#92400E}
+    .sp-s{background:var(--accent-lt);border-color:var(--accent-lt)}.sp-s .sp-count{color:#1B4332}.sp-s .sp-label{color:#1B4332}
+    .sp-h{background:var(--purple-lt);border-color:#DDD6FE}.sp-h .sp-count{color:var(--purple)}.sp-h .sp-label{color:#5B21B6}
+    .sp-i{background:var(--gray-lt);border-color:var(--border)}.sp-i .sp-count{color:var(--muted)}.sp-i .sp-label{color:var(--muted)}
+    .sp-f{background:var(--orange-lt);border-color:#FED7AA}.sp-f .sp-count{color:var(--orange)}.sp-f .sp-label{color:#9A3412}
+    /* Banners */
+    .run-banner{background:var(--accent-xl);border:1px solid var(--accent-lt);border-radius:var(--r-sm);padding:11px 14px;margin-bottom:16px;display:flex;align-items:center;gap:10px;font-size:12px;color:var(--accent);font-weight:500;}
+    .run-spinner{width:15px;height:15px;border:2px solid var(--accent-lt);border-top-color:var(--accent-md);border-radius:50%;animation:spin .7s linear infinite;flex-shrink:0;}
+    .snapshot-banner{background:#EFF6FF;border:1px solid #BFDBFE;border-radius:var(--r-sm);padding:9px 14px;margin-bottom:16px;display:flex;align-items:center;gap:8px;font-size:11px;color:#1D4ED8;font-weight:500;}
+    .snapshot-chip{display:inline-flex;align-items:center;gap:5px;padding:3px 9px;border-radius:99px;background:#EFF6FF;color:#1D4ED8;font-size:10px;font-weight:700;border:1px solid #BFDBFE;}
+    /* Tables */
+    .data-table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums;}
+    .data-table th{padding:8px 10px;text-align:left;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);background:var(--gray-lt);border-bottom:1px solid var(--border);white-space:nowrap;}
+    .data-table td{padding:8px 10px;border-bottom:1px solid var(--border);font-size:12.5px;}
+    /* Formula tooltip — hover a Min/Max or Buffer cell to see the actual calculation, step by step,
+       with this row's real numbers plugged in. NOT pure-CSS: the table's scroll wrapper has both
+       overflow-x:auto and overflow-y:auto (for the sticky header + horizontal scroll), which clips
+       any absolutely-positioned child that pokes outside its box — a CSS-only :hover tooltip got
+       cut off by the sticky header on top rows and by the right edge on the last (Buffer) column.
+       Instead one single tooltip is rendered position:fixed at the very end of <body> (outside every
+       scrolling ancestor) and JS computes its on-screen position on mouseenter, flipping above/below
+       depending on available space and clamping horizontally to the viewport. */
+    .formula-cell{cursor:help;border-bottom:1px dotted var(--muted);}
+    .formula-tooltip-float{position:fixed;background:#1F2937;color:#F9FAFB;
+      font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+      font-size:11px;line-height:1.6;white-space:pre-line;text-align:left;padding:10px 12px;border-radius:8px;
+      max-width:280px;z-index:9999;box-shadow:0 8px 20px rgba(0,0,0,.28);pointer-events:none;}
+
+    /* "View Formulas" reference modal — replaces the old "View in Metabase" button on the SKU/
+       Pharmacy detail pages. A static methodology reference (not per-row like the hover tooltips
+       above), covering every formula in the pipeline end to end with a plain-English explanation
+       next to each one, sourced from REPLENISHMENT_FORMULAS.md. */
+    .formula-modal-overlay{position:fixed;inset:0;background:rgba(20,18,14,.55);z-index:200;display:flex;align-items:center;justify-content:center;padding:24px;}
+    .formula-modal{background:var(--surface);border-radius:var(--r);width:100%;max-width:780px;max-height:88vh;display:flex;flex-direction:column;box-shadow:0 20px 50px rgba(0,0,0,.35);}
+    .formula-modal-header{display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid var(--border);flex-shrink:0;}
+    .formula-modal-header h2{font-size:16px;font-weight:700;}
+    .formula-modal-header p{font-size:11.5px;color:var(--muted);margin-top:2px;}
+    .formula-modal-close{width:30px;height:30px;border-radius:50%;border:1px solid var(--border);background:var(--gray-lt);color:var(--muted);font-size:16px;line-height:1;cursor:pointer;flex-shrink:0;}
+    .formula-modal-close:hover{background:var(--danger-lt);color:var(--danger);border-color:var(--danger-lt);}
+    .formula-modal-body{overflow-y:auto;padding:18px 20px 26px;}
+    .formula-section{margin-bottom:22px;padding-bottom:18px;border-bottom:1px solid var(--border);}
+    .formula-section:last-child{border-bottom:none;margin-bottom:0;padding-bottom:0;}
+    .formula-section-num{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:50%;background:var(--accent-lt);color:var(--accent);font-size:10.5px;font-weight:700;margin-right:7px;flex-shrink:0;}
+    .formula-section h3{font-size:13px;font-weight:700;display:flex;align-items:center;margin-bottom:8px;}
+    .formula-code{background:#1F2937;color:#F9FAFB;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+      font-size:12px;line-height:1.7;white-space:pre-line;padding:10px 14px;border-radius:8px;margin-bottom:8px;}
+    .formula-explain{font-size:12.5px;color:var(--text);line-height:1.6;}
+    .formula-explain b{color:var(--accent);}
+    .formula-note{font-size:11.5px;color:var(--muted);background:var(--gray-lt);border-left:3px solid var(--warn);padding:6px 10px;border-radius:4px;margin-top:8px;}
+    .z-table{width:100%;border-collapse:collapse;font-size:11.5px;margin-top:6px;}
+    .z-table th,.z-table td{padding:5px 8px;border:1px solid var(--border);text-align:center;}
+    .z-table th{background:var(--gray-lt);font-weight:700;color:var(--muted);}
+    /* Flag dots now use the app's own accent/danger tokens instead of one-off hex — they were a different red/green than every other alert in the app */
+    .flag-dot-red{display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--danger);box-shadow:0 0 0 2px var(--danger-lt);vertical-align:middle;}
+    .flag-dot-green{display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 2px var(--accent-lt);vertical-align:middle;}
+    /* Yellow = the opposite risk from red: position is UNDER 30% of L7D sales, i.e. barely any
+       cover relative to how fast this is actually selling — a possible demand underestimate /
+       stockout risk, not an overstock one. */
+    .flag-dot-yellow{display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--yellow);box-shadow:0 0 0 2px var(--yellow-lt);vertical-align:middle;}
+    .flag-pill-green{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:99px;font-size:10px;font-weight:700;background:var(--accent-lt);color:var(--accent);border:1px solid #74C69D;}
+    .lt-input{width:44px;height:28px;padding:0 4px;border:1.5px solid var(--accent);border-radius:var(--r-sm);font-family:inherit;font-size:12px;font-weight:700;text-align:center;outline:none;background:#fff;cursor:text;}
+    .lt-input:focus{box-shadow:0 0 0 2px var(--accent-lt);}
+    /* LT edit cell — pinned column, bigger click targets, stepper buttons so users don't need pixel-perfect precision */
+    .lt-edit-cell{display:flex;flex-direction:column;align-items:flex-end;gap:2px;}
+    .lt-stepper{display:flex;align-items:center;gap:3px;}
+    .lt-step-btn{width:22px;height:28px;border:1px solid var(--border);background:var(--surface);border-radius:var(--r-sm);font-size:14px;font-weight:700;color:var(--accent);cursor:pointer;display:flex;align-items:center;justify-content:center;line-height:1;padding:0;flex-shrink:0;}
+    .lt-step-btn:hover{background:var(--accent-lt);border-color:var(--accent);}
+    .lt-step-btn:active{transform:scale(.95);}
+    .lt-col-active{background:var(--accent-xl)!important;}
+    /* Sticky identity + edit columns so LT/SKU stay visible without horizontal scrolling through reference metrics.
+       min-width + white-space:nowrap fixes SKU codes (e.g. "ID121884-1") wrapping to two cramped lines. */
+    .data-table td.sticky-col,.data-table th.sticky-col{position:sticky;z-index:3;box-shadow:1px 0 0 0 var(--border);white-space:nowrap;}
+    .data-table th.sticky-col{background:var(--gray-lt);z-index:4;}
+    .data-table td.sticky-col{background:var(--surface);}
+    .data-table tr:hover td.sticky-col{background:#FAFAF8;}
+    .data-table .sku-col{min-width:96px;}
+    .data-table .class-col{min-width:50px;}
+    .data-table .lt-sticky-col{min-width:64px;}
+    /* Product Name sits directly beside SKU (sticky, not min-width) — needs a truly FIXED width,
+       not min-width like the others, because Class/LT immediately after it are also sticky and
+       their `left` offset is a hardcoded pixel value; a variable-width product name column would
+       silently throw those out of alignment the moment a longer name renders. Wraps onto multiple
+       lines instead of truncating — the wider row height that causes is fine, unlike changing the
+       column's own width, which would break the fixed left offsets after it. The .sticky-col base
+       rule sets white-space:nowrap for SKU/Class/LT (short, single-line content); this overrides
+       that specifically for Product Name via a more specific selector (adds the td/th element +
+       both classes) rather than !important. */
+    .data-table td.sticky-col.product-name-sticky-col,.data-table th.sticky-col.product-name-sticky-col{
+      /* table-layout is auto (default), so a plain width is only a soft hint — once white-space:
+         normal lets this column wrap instead of forcing itself wide enough for one line, auto
+         layout happily shrank it to ~32px (breaking nearly every word), ballooning row height to
+         ~400px+. min-width is the one sizing property auto layout actually treats as a hard floor,
+         so that's what keeps this column reliably at its intended width. */
+      width:170px;min-width:170px;max-width:170px;white-space:normal;word-break:break-word;line-height:1.3;
+    }
+    .data-table .pharm-col{min-width:170px;}
+    .data-table tr:last-child td{border-bottom:none;}
+    .data-table tr:hover td{background:#FAFAF8;}
+    .data-table td.right{text-align:right;}
+    .data-table td.mono{font-family:monospace;font-size:11px;}
+    .data-table tr.clickable{cursor:pointer;}
+    .data-table tr.clickable:hover td{background:#F0FAF2;}
+    /* Inline edit */
+    .qty-edit-wrap{display:flex;align-items:center;gap:5px;}
+    /* Default/clean state: neutral border — this box matches what's saved, nothing pending. */
+    .qty-edit-input{width:62px;height:26px;padding:0 6px;border:1px solid var(--border-strong);border-radius:var(--r-sm);font-family:inherit;font-size:12px;font-weight:600;background:var(--surface);outline:none;text-align:right;transition:border-color .15s,background .15s;}
+    .qty-edit-input:focus{box-shadow:0 0 0 2px var(--accent-lt);}
+    /* Dirty state: you've typed a different value that hasn't been saved yet — make that obvious */
+    .qty-edit-input.dirty{border:1.5px solid var(--warn);background:var(--warn-lt);}
+    /* Save button mirrors the same states: disabled+muted when there's nothing to save, so the
+       button's own appearance tells you whether it's "already saved" without reading the toast. */
+    .qty-save-btn{height:26px;padding:0 8px;background:var(--gray-lt);color:var(--muted);border:1px solid var(--border);border-radius:var(--r-sm);font-size:11px;font-weight:600;cursor:not-allowed;transition:all .15s;}
+    .qty-save-btn.dirty{background:var(--accent);color:#fff;border-color:var(--accent);cursor:pointer;box-shadow:0 0 0 3px var(--accent-lt);}
+    .qty-save-btn.dirty:hover{background:#245a42;}
+    /* Just-saved: brief confirmation flash so there's feedback right on the row, not just a toast that vanishes */
+    .qty-save-btn.just-saved{background:var(--accent);color:#fff;border-color:var(--accent);cursor:default;}
+    @keyframes qty-saved-flash{0%{background:var(--accent-lt);}100%{background:transparent;}}
+    .qty-edit-wrap.just-saved-flash{animation:qty-saved-flash 1s ease-out;border-radius:var(--r-sm);}
+    /* Compact variant of .qty-save-btn sized to sit under the LT stepper in the narrow sticky
+       LT column, instead of the wider Edit Qty cell it was originally built for. */
+    .lt-save-btn{height:22px;width:100%;padding:0 4px;font-size:10px;margin-top:2px;}
+    /* Tags */
+    .abc-tag{display:inline-block;padding:2px 7px;border-radius:4px;font-size:10px;font-weight:700;letter-spacing:.4px;}
+    .t-ax,.t-ay,.t-az{background:var(--accent-lt);color:var(--accent);}
+    .t-bx,.t-by,.t-bz{background:#DCFCE7;color:#166534;}
+    .t-cx,.t-cy,.t-cz{background:#DBEAFE;color:#1E40AF;}
+    .t-dx,.t-dy,.t-dz,.t-ex,.t-ey,.t-ez{background:var(--gray-lt);color:var(--muted);}
+    .status-tag{display:inline-block;padding:2px 8px;border-radius:99px;font-size:11px;font-weight:600;}
+    .st-order{background:var(--accent-lt);color:var(--accent);}
+    .st-over{background:var(--warn-lt);color:var(--warn);}
+    .st-ntr{background:#DCFCE7;color:#166534;}
+    .st-hold{background:var(--purple-lt);color:var(--purple);}
+    .st-inactive{background:var(--gray-lt);color:var(--muted);}
+    .st-manual{background:#FFF7ED;color:#C2410C;}
+    /* Filters */
+    .filters{padding:12px 16px;border-bottom:1px solid var(--border);display:flex;gap:8px;align-items:center;flex-wrap:wrap;background:var(--gray-lt);}
+    .filter-select,.filter-input{height:32px;padding:0 9px;border:1px solid var(--border);border-radius:var(--r-sm);background:var(--surface);font-family:inherit;font-size:12px;color:var(--text);outline:none;}
+    .filter-select:focus,.filter-input:focus{border-color:var(--accent);}
+    .filter-input{width:175px;}
+    .filter-count{margin-left:auto;font-size:11px;color:var(--muted);}
+    .filter-chip{height:32px;padding:0 12px;border-radius:99px;border:1px solid var(--border);background:var(--surface);font-family:inherit;font-size:11px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:5px;color:var(--muted);transition:all .15s;}
+    .filter-chip:hover{border-color:var(--orange);color:var(--orange);}
+    .filter-chip.active{background:var(--orange-lt);border-color:#FED7AA;color:var(--orange);}
+    /* Distinct colors per filter so several active at once are still tellable apart at a glance —
+       previously every active chip looked identically orange regardless of which filter it was. */
+    .filter-chip.active-orange{background:var(--orange-lt);border-color:#FED7AA;color:var(--orange);}
+    .filter-chip.active-green{background:var(--accent-lt);border-color:var(--accent-md);color:var(--accent);}
+    .filter-chip.active-purple{background:var(--purple-lt);border-color:#DDD6FE;color:var(--purple);}
+    /* Pagination */
+    .pagination{padding:12px 16px;border-top:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;}
+    .pagination-info{font-size:11px;color:var(--muted);}
+    .page-btns{display:flex;gap:3px;}
+    .page-btn{width:28px;height:28px;border:1px solid var(--border);border-radius:var(--r-sm);background:var(--surface);font-family:inherit;font-size:11px;font-weight:500;cursor:pointer;display:flex;align-items:center;justify-content:center;color:var(--muted);transition:all .15s;}
+    .page-btn:hover{background:var(--bg);}
+    .page-btn.active{background:var(--accent);color:#fff;border-color:var(--accent);}
+    .page-btn:disabled{opacity:.4;cursor:not-allowed;}
+    /* Tabs */
+    .tabs{display:flex;border-bottom:1px solid var(--border);background:var(--gray-lt);overflow-x:auto;}
+    .tab{padding:10px 16px;font-size:12px;font-weight:600;color:var(--muted);cursor:pointer;border-bottom:2px solid transparent;transition:all .15s;white-space:nowrap;}
+    .tab:hover{color:var(--text);}.tab.active{color:var(--accent);border-bottom-color:var(--accent);}
+    /* Form */
+    .form-row{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;}
+    .form-group{display:flex;flex-direction:column;gap:4px;}
+    .form-label{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);}
+    .form-input,.form-select{height:34px;padding:0 10px;border:1px solid var(--border);border-radius:var(--r-sm);font-family:inherit;font-size:12px;color:var(--text);background:var(--surface);outline:none;min-width:110px;}
+    .form-input:focus,.form-select:focus{border-color:var(--accent);}
+    /* Control rows */
+    .ctrl-row{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--border);}
+    .ctrl-row:last-child{border-bottom:none;}
+    .ctrl-chip{display:inline-block;padding:2px 8px;border-radius:4px;font-size:10px;font-weight:700;background:var(--accent-lt);color:var(--accent);}
+    /* Toggle */
+    .toggle{position:relative;display:inline-block;width:38px;height:22px;flex-shrink:0;}
+    .toggle input{opacity:0;width:0;height:0;}
+    .toggle-slider{position:absolute;cursor:pointer;inset:0;background:#D0D5DD;border-radius:99px;transition:.25s;}
+    .toggle-slider:before{position:absolute;content:"";height:16px;width:16px;left:3px;bottom:3px;background:#fff;border-radius:50%;transition:.25s;box-shadow:0 1px 3px rgba(0,0,0,.15);}
+    .toggle input:checked + .toggle-slider{background:var(--accent);}
+    .toggle input:checked + .toggle-slider:before{transform:translateX(16px);}
+    /* CSV */
+    .import-zone{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+    /* Toast */
+    .toast{position:fixed;bottom:24px;right:24px;background:var(--sidebar);color:#fff;padding:10px 16px;border-radius:var(--r-sm);font-size:12px;font-weight:500;z-index:999;box-shadow:0 4px 16px rgba(0,0,0,.2);transition:opacity .3s;}
+    /* PHB badges */
+    .phb-badge-active{display:inline-block;padding:2px 8px;border-radius:99px;font-size:10px;font-weight:700;background:var(--accent-lt);color:var(--accent);}
+    .phb-badge-off{display:inline-block;padding:2px 8px;border-radius:99px;font-size:10px;font-weight:700;background:var(--gray-lt);color:var(--muted);}
+    /* Detail page */
+    .detail-back-btn{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;color:var(--muted);cursor:pointer;padding:6px 0;margin-bottom:14px;}
+    .detail-back-btn:hover{color:var(--accent);}
+    .detail-header{display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:18px;}
+    .detail-header-info h2{font-size:18px;font-weight:700;letter-spacing:-.4px;}
+    .detail-header-info p{font-size:12px;color:var(--muted);margin-top:3px;}
+    .detail-kpis{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:18px;}
+    .detail-kpi{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-sm);padding:12px 16px;min-width:110px;}
+    .detail-kpi-label{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.7px;color:var(--muted);margin-bottom:4px;}
+    .detail-kpi-value{font-size:20px;font-weight:700;letter-spacing:-.5px;font-variant-numeric:tabular-nums;}
+    .metabase-btn{display:inline-flex;align-items:center;gap:6px;padding:6px 12px;background:#1E40AF;color:#fff;border-radius:var(--r-sm);font-size:11px;font-weight:600;text-decoration:none;}
+    .metabase-btn:hover{background:#1D4ED8;}
+    /* Per-row "stock_ovt" link — same Metabase-blue as .metabase-btn but sized to sit inside a table cell */
+    .stock-ovt-link{display:inline-flex;align-items:center;gap:3px;padding:3px 8px;background:var(--gray-lt);color:#1E40AF;border-radius:var(--r-sm);font-size:10.5px;font-weight:600;text-decoration:none;border:1px solid var(--border);}
+    .stock-ovt-link:hover{background:#1E40AF;color:#fff;border-color:#1E40AF;}
+    .empty{text-align:center;padding:36px;color:var(--muted);font-size:12px;}
+    @media(max-width:900px){.sidebar{width:56px;}.brand-name,.brand-sub,.nav-item span{display:none;}.kpi-grid{grid-template-columns:1fr 1fr;}.two-col{grid-template-columns:1fr;}}
+  </style>
+</head>
+<body x-data="app()">
+  <div class="toast" x-show="toast.show" x-text="toast.msg" x-transition style="display:none;"></div>
+
+  <!-- Single shared formula tooltip — see the CSS comment on .formula-tooltip-float for why this
+       lives here (outside the table's scroll wrapper) instead of inline per-cell. -->
+  <div class="formula-tooltip-float" x-show="hoverTooltip.show" x-text="hoverTooltip.text"
+       :style="'top:'+hoverTooltip.top+'px;left:'+hoverTooltip.left+'px;'" style="display:none;"></div>
+
+  <!-- "View Formulas" reference modal — static methodology reference replacing the old "View in
+       Metabase" button on both detail pages. Source of truth: REPLENISHMENT_FORMULAS.md, ported to
+       plain-English explanations + Unicode math instead of raw LaTeX (which won't render here).
+       Where the actual running code differs slightly from that doc's exact labels (e.g. the real
+       hold-override status strings are "Hold Product"/"Hold to Stock Out", not "Hold"/"Hold to
+       Zero"), this uses what the code actually outputs, since that's what you'll see on screen. -->
+  <div class="formula-modal-overlay" x-show="showFormulaModal" @click.self="showFormulaModal=false" style="display:none;">
+    <div class="formula-modal">
+      <div class="formula-modal-header">
+        <div>
+          <h2>How Replenishment Is Calculated</h2>
+          <p>Every formula in the pipeline, in the order it runs — from raw sales history to the final ordered quantity.</p>
+        </div>
+        <button class="formula-modal-close" @click="showFormulaModal=false" title="Close">&#10005;</button>
+      </div>
+      <div class="formula-modal-body">
+
+        <div class="formula-section">
+          <h3><span class="formula-section-num">1</span>Mean Weekly Demand (&mu;)</h3>
+          <div class="formula-code">&mu; = (1 &divide; N) &times; &Sigma; d&#7522;</div>
+          <div class="formula-explain">The average number of units sold per week over the available sales history (N weeks). This is the baseline "typical week" every other demand formula builds on.</div>
+        </div>
+
+        <div class="formula-section">
+          <h3><span class="formula-section-num">2</span>Demand Std. Deviation (&sigma; / std_qty)</h3>
+          <div class="formula-code">&sigma; = &radic;[ (1 &divide; N) &times; &Sigma;(d&#7522; &minus; &mu;)&sup2; ]</div>
+          <div class="formula-explain">How much week-to-week demand swings around the average (population std. dev.). A SKU that sells a steady 10/week has a low &sigma;; one that sells 0, 0, 40, 0 has a high &sigma; even with the same average — and a high &sigma; is exactly what drives a bigger safety buffer below.</div>
+        </div>
+
+        <div class="formula-section">
+          <h3><span class="formula-section-num">3</span>Coefficient of Variation &amp; XYZ Class</h3>
+          <div class="formula-code">CV = &sigma; &divide; &mu;</div>
+          <div class="formula-explain">Normalizes volatility relative to how big the average demand is, so a fast- and slow-mover can be compared fairly. This sorts every SKU into: <b>X</b> (steady, CV &lt; 0.5), <b>Y</b> (moderate, 0.5 &le; CV &lt; 1.0), or <b>Z</b> (volatile/intermittent, CV &ge; 1.0 or undefined when &mu; = 0). Combined with the ABC revenue tier (A/B/C/D/E), this gives the two-letter class you see everywhere in the app (e.g. "AZ").</div>
+        </div>
+
+        <div class="formula-section">
+          <h3><span class="formula-section-num">4</span>Demand Forecast (forecast_qty)</h3>
+          <div class="formula-code">X / Y classes &mdash; Simple Exponential Smoothing (&alpha; = 0.5):<br>forecast = &alpha; &times; latest_week + (1&minus;&alpha;) &times; previous_forecast<br><br>Z class &mdash; Croston Method (intermittent demand):<br>forecast = avg(non-zero weeks) &divide; avg(weeks between non-zero sales)</div>
+          <div class="formula-explain">The method is picked automatically by XYZ class. SES weighs recent weeks more than old ones — smooth, responsive, good for demand that sells most weeks. Croston is built specifically for items with lots of zero-sale weeks: it separates "how much when it does sell" from "how often it sells," which SES badly overstates or understates for intermittent SKUs.</div>
+        </div>
+
+        <div class="formula-section">
+          <h3><span class="formula-section-num">5</span>Service Level Z-Score (z_value)</h3>
+          <table class="z-table">
+            <thead><tr><th>Class</th><th>Service Level</th><th>Z-Score</th></tr></thead>
+            <tbody>
+              <tr><td>AX</td><td>97.0%</td><td>1.88</td></tr>
+              <tr><td>AY</td><td>95.0%</td><td>1.65</td></tr>
+              <tr><td>AZ</td><td>93.0%</td><td>1.48</td></tr>
+              <tr><td>BX</td><td>91.0%</td><td>1.34</td></tr>
+              <tr><td>BY</td><td>90.0%</td><td>1.28</td></tr>
+              <tr><td>BZ</td><td>89.0%</td><td>1.23</td></tr>
+              <tr><td>CX</td><td>85.0%</td><td>1.04</td></tr>
+              <tr><td>CY</td><td>80.0%</td><td>0.84</td></tr>
+              <tr><td>CZ</td><td>75.0%</td><td>0.67</td></tr>
+              <tr><td>DX / DY / DZ</td><td>72.0%</td><td>0.58</td></tr>
+              <tr><td>EX / EY / EZ</td><td>70.0%</td><td>0.52</td></tr>
+            </tbody>
+          </table>
+          <div class="formula-explain" style="margin-top:8px;">Each ABC-XYZ combination maps to a target probability of <i>not</i> stocking out. Higher-value, more-predictable SKUs (AX) get a higher target service level — and therefore a higher Z — while low-value or highly volatile ones get a lower target. This Z feeds directly into the buffer stock formula next.</div>
+        </div>
+
+        <div class="formula-section">
+          <h3><span class="formula-section-num">6</span>Buffer Stock</h3>
+          <div class="formula-code">Buffer Stock = &lceil; Z &times; &sigma; &times; &radic;L &rceil;</div>
+          <div class="formula-explain">The safety cushion held to absorb demand swings while waiting for a reorder to arrive. It scales with how volatile demand is (&sigma;), how aggressively you want to avoid stockouts (Z), and how long you're exposed to that risk (&radic;L &mdash; the standard square-root-of-time rule for combining independent weekly variance over L weeks of lead time). Result is rounded up (ceiling) since you can't hold a fraction of a unit as safety stock.</div>
+        </div>
+
+        <div class="formula-section">
+          <h3><span class="formula-section-num">7</span>Minimum &amp; Maximum Stock</h3>
+          <div class="formula-code">Minimum Stock = &lceil; Forecast + Buffer &rceil;<br>Maximum Stock = &lceil; Minimum + Forecast &rceil; = &lceil; 2&times;Forecast + Buffer &rceil;</div>
+          <div class="formula-explain"><b>Minimum</b> is the reorder point &mdash; once effective stock falls to this level it's time to reorder, since it only covers expected lead-time demand plus the safety buffer. <b>Maximum</b> is the order-up-to level &mdash; replenishing up to Max covers roughly two forecast cycles plus buffer before you'd need to reorder again.</div>
+        </div>
+
+        <div class="formula-section">
+          <h3><span class="formula-section-num">8</span>Effective Qty &amp; Target Selection</h3>
+          <div class="formula-code">Effective Qty = Total Qty (on hand) + In-Transit Qty<br><br>Target Stock = Maximum Stock  if replenish_mode = "max"<br>Target Stock = Minimum Stock  if replenish_mode = "min"</div>
+          <div class="formula-explain">Effective Qty is what you can actually count on soon &mdash; physical stock plus anything already shipped and en route. Whether a category replenishes up to Max or just up to Min is configurable per ABC-XYZ class / pharmacy in Control Center &rarr; Config (defaults to "max" everywhere).</div>
+        </div>
+
+        <div class="formula-section">
+          <h3><span class="formula-section-num">9</span>Net Replenishment Need &amp; Status</h3>
+          <div class="formula-code">Normal Qty = max(Target Stock &minus; Effective Qty, 0)</div>
+          <div class="formula-explain">The raw sales-unit shortage before any override, checked in this order:</div>
+          <table class="z-table" style="margin-top:8px;">
+            <thead><tr><th>Condition</th><th>Status</th><th>Qty</th></tr></thead>
+            <tbody>
+              <tr><td>Total Qty &gt; Target Stock</td><td>Overstock</td><td>0</td></tr>
+              <tr><td>Total Qty &ge; Minimum Stock</td><td>No need to replenish</td><td>0</td></tr>
+              <tr><td>Normal Qty &le; 0</td><td>No need to replenish</td><td>0</td></tr>
+              <tr><td>plano_follow = "no"</td><td>No Follow</td><td>0</td></tr>
+              <tr><td>SKU not in planogram master</td><td>Manually Review</td><td>0</td></tr>
+              <tr><td>otherwise</td><td>the number itself</td><td>Normal Qty</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="formula-section">
+          <h3><span class="formula-section-num">10</span>Unit Conversion (sales &rarr; box units)</h3>
+          <div class="formula-code">Ordered Qty (boxes) = &lceil; Normal Qty &divide; Conversion Factor &rceil;</div>
+          <div class="formula-explain">Suppliers ship in boxes/cartons, not loose units, so the sales-unit shortage is rounded <b>up</b> to the nearest whole box &mdash; you'll never see an order for a fraction of a box. This is also why "Replenish Qty" (sales units) can look like it barely moves between two lead times even when Min/Max clearly changed: if the box count needed doesn't cross a ceiling boundary, the sales-unit-equivalent quantity stays identical.</div>
+        </div>
+
+        <div class="formula-section">
+          <h3><span class="formula-section-num">11</span>Planogram Target Gap</h3>
+          <div class="formula-code">Effective Qty (boxes) = Effective Qty &divide; Conversion Factor<br>Target Gap = max( &lceil; Plano Unit Qty &minus; Effective Qty (boxes) &rceil; , 0 )</div>
+          <div class="formula-explain">The planogram specifies how many <b>boxes</b> should sit on the shelf, completely independent of the demand-forecast math above &mdash; a slow-moving SKU can still have a shelf-facing requirement. This is the exact formula behind the <b>Plano Floor</b> and <b>Hold&rarr;Plano</b> columns: it converts current stock into box units first (dividing by the conversion factor) before comparing against the planogram's box target, since the two numbers naturally look similar even when they're in different units and shouldn't be compared directly.</div>
+          <div class="formula-note">Example: plano wants 6 boxes, conversion factor is 40 (40 sales units per box), and the pharmacy has 6 sales units on hand. That's only 6&divide;40 = 0.15 of a box &mdash; nowhere near the 6-box target &mdash; so Target Gap = &lceil;6 &minus; 0.15&rceil; = 6 boxes, not 0. "6 vs 6" looks like a match only if you forget one side is sales units and the other is boxes.</div>
+        </div>
+
+        <div class="formula-section">
+          <h3><span class="formula-section-num">12</span>Planogram Gap Override</h3>
+          <div class="formula-code">Plano Floor: Ordered Qty = Target Gap  if Target Gap &gt; Ordered Qty (else unchanged &mdash; never decreases)<br>Hold&rarr;Plano: Ordered Qty = Target Gap  always, for SKUs on the hold_to_plano.csv allowlist</div>
+          <div class="formula-explain">Two related but separate mechanisms: the unconditional <b>Plano Floor</b> applies to any SKU on the planogram and can only raise the order quantity, never lower it. <b>Hold&rarr;Plano</b> is a curated allowlist that fully replaces the quantity with the planogram gap, overriding the demand-formula result entirely for that SKU. Both are skipped for rows already flagged "No Follow" / "Hold Product" / "Hold to Stock Out" &mdash; a planogram rule can't reactivate a SKU someone explicitly suppressed.</div>
+        </div>
+
+        <div class="formula-section">
+          <h3><span class="formula-section-num">13</span>Plano Stock Ratio Gate</h3>
+          <div class="formula-code">Plano QTY (sales units) = Plano Unit Qty &times; Conversion Factor<br>Ratio = Effective Qty &divide; Plano QTY<br><br>If (Plano Floor applied OR Hold&rarr;Plano applied) AND Ratio &ge; 0.6:<br>&nbsp;&nbsp;Ordered Qty = 0, Status = "No need to replenish"<br>Else: unchanged &mdash; proceeds to TMP allocation as normal</div>
+          <div class="formula-explain">A third check stacked on top of &sect;12, still before TMP allocation. Even when the planogram floor or the Hold&rarr;Plano allowlist says a SKU should replenish, this skips it anyway if the pharmacy already holds at least 60% of the planogram's own shelf target &mdash; there's no point competing for (possibly scarce) warehouse stock over a SKU that isn't meaningfully under-stocked relative to its own target. Only a ratio <b>under</b> 0.6 lets the planogram-driven quantity through to TMP allocation; everything from 0.6 up is suppressed to 0 regardless of what &sect;11&ndash;12 computed. Rows neither planogram mechanism touched are unaffected by this gate.</div>
+        </div>
+
+        <div class="formula-section">
+          <h3><span class="formula-section-num">14</span>Hold Rule Overrides</h3>
+          <div class="formula-code">Hold Product:        Ordered Qty = 0<br>Hold to Stock Out:    Ordered Qty = 0<br>Hold to Planogram:    Ordered Qty = Target Gap (see &sect;11&ndash;12)</div>
+          <div class="formula-explain">Manual business rules from Control Center &rarr; Hold / Hold to Planogram, applied per SKU (optionally scoped to specific pharmacies) and take precedence over the formula-driven number: <b>Hold Product</b> pauses ordering entirely, <b>Hold to Stock Out</b> deliberately lets stock run down to zero without reordering, and <b>Hold to Planogram</b> forces strict shelf-target compliance regardless of what the demand math says.</div>
+        </div>
+
+        <div class="formula-section">
+          <h3><span class="formula-section-num">15</span>Warehouse (TMP) Allocation</h3>
+          <div class="formula-code">If TMP Qty = 0:  Stockout TMP, Ordered Qty Final = 0<br><br>Share&#7529; = Requested Qty&#7529; &times; (TMP Qty &divide; &Sigma; Requested Qty)<br>Base Allocation&#7529; = &lfloor; Share&#7529; &rfloor;<br>Remaining boxes = TMP Qty &minus; &Sigma; Base Allocation&#7529;<br>&rarr; handed out 1 box at a time, highest fractional remainder first, lowest pharmacy ID breaks ties</div>
+          <div class="formula-explain">Runs only when the central warehouse doesn't have enough stock to fully satisfy every requesting pharmacy at once. Each pharmacy's share is proportional to how much it asked for relative to total demand; whole boxes are handed out first, then any leftover boxes go to whichever pharmacies were closest to rounding up. This is the only step that depends on what every <i>other</i> pharmacy is asking for at the same time &mdash; which is why editing one pharmacy's Lead Time in the dashboard recalculates instantly (formula-only) without re-running this allocation across the other 24.</div>
+        </div>
+
+        <div class="formula-section">
+          <h3><span class="formula-section-num">16</span>Flagged SKU Threshold</h3>
+          <div class="formula-code">Total Position = Replenish Qty + Effective Qty<br>L7D Ratio = Total Position &divide; L7D Sales Qty<br><br>Red (overstock risk):  L7D Ratio &gt; 1.30  (position exceeds L7D sales by 30%+)<br>Yellow (underestimate/stockout risk):  L7D Ratio &lt; 0.30<br>Green: 0.30 &le; L7D Ratio &le; 1.30<br><br>L30D Flag (red only) = (Total Position &divide; L30D Sales Qty) &gt; 1.00</div>
+          <div class="formula-explain">Not "is this order big" on its own &mdash; it's "will this order plus what's already on hand sit well above, or well below, recent sell-through." <b>Red</b>: a SKU that just replenished a lot but also sells fast won't flag; one with a modest order but very little recent demand will. <b>Yellow</b> is the opposite risk: position barely covers 30% of last week's sales, which can mean demand was underestimated and this SKU may stock out before the next cycle. Both are sanity-check signals, not necessarily errors. The L30D flag only has the red (over) side — no yellow equivalent has been added for it.</div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <div class="sidebar-brand">
+      <div class="brand-icon"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/></svg></div>
+      <div><div class="brand-name">Replenishment</div><div class="brand-sub">Inofarma</div></div>
+    </div>
+    <div class="sidebar-section">Main</div>
+    <div class="nav-item" :class="{active:page==='replen'||page==='pharmacyDetail'||page==='productDetail'}" @click="page='replen'">
+      <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+      <span>Replen</span>
+    </div>
+    <div class="nav-item" :class="{active:page==='orders'}" @click="page='orders'">
+      <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2"/></svg>
+      <span>Orders</span>
+    </div>
+    <div class="nav-item" :class="{active:page==='classification'}" @click="page='classification'">
+      <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01"/></svg>
+      <span>ABC-XYZ</span>
+    </div>
+    <div class="sidebar-section">Manage</div>
+    <div class="nav-item" :class="{active:page==='control'}" @click="page='control'">
+      <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><circle cx="12" cy="12" r="3"/></svg>
+      <span>Control Center</span>
+    </div>
+    <div class="nav-item" :class="{active:page==='pharmacies'}" @click="page='pharmacies'">
+      <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"/></svg>
+      <span>Pharmacies</span>
+      <span style="margin-left:auto;background:var(--accent-md);color:#fff;font-size:9px;font-weight:700;padding:1px 6px;border-radius:99px;" x-text="pharmacies.filter(p=>p.active).length"></span>
+    </div>
+    <div class="nav-item" :class="{active:page==='history'}" @click="page='history'">
+      <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+      <span>Run History</span>
+    </div>
+    <div class="sidebar-footer">v1.3 &middot; dw_replenishment_prod</div>
+  </aside>
+
+  <!-- Content -->
+  <div class="content">
+    <!-- Topbar -->
+    <div class="topbar">
+      <div>
+        <div class="topbar-title" x-text="page==='pharmacyDetail'&&selectedPharmacy?selectedPharmacy.name:(page==='productDetail'&&selectedProduct?selectedProduct.sku:pageTitle[page])"></div>
+        <div class="topbar-sub">
+          <span x-show="page!=='pharmacyDetail'&&page!=='productDetail'&&runStatus!=='idle'" x-text="'Cycle: '+lastRun.cycleId+' &middot; '+lastRun.time"></span>
+          <span x-show="page!=='pharmacyDetail'&&page!=='productDetail'&&runStatus==='idle'" style="color:var(--muted);">Not run yet — click "Run Replenishment" &rarr;</span>
+          <span x-show="page==='pharmacyDetail'" x-text="'Pharmacy ID: '+(selectedPharmacy?selectedPharmacy.id:'')"></span>
+          <span x-show="page==='productDetail'" x-text="'SKU across '+(selectedProductOrders?selectedProductOrders.length:0)+' pharmacies'"></span>
+        </div>
+      </div>
+      <div class="topbar-right">
+        <div class="snapshot-chip">
+          <svg width="11" height="11" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6l4 2"/></svg>
+          Snapshot 08:00 WIB
+        </div>
+        <input type="date" id="date-filter" class="filter-select" x-model="filterDate" style="width:130px;" />
+        <div :class="{'badge':true,'badge-success':runStatus==='success','badge-running':runStatus==='running','badge-failed':runStatus==='failed','badge-idle':runStatus==='idle'}">
+          <span class="badge-dot"></span>
+          <span x-text="runStatus==='success'?'Success':runStatus==='running'?'Running…':runStatus==='failed'?'Failed':'Idle'"></span>
+        </div>
+        <label class="btn btn-csv" style="cursor:pointer;" title="Import ordering_df.csv output">
+          <svg width="13" height="13" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
+          Import CSV Output
+          <input type="file" accept=".csv" style="display:none;" @change="loadCSVFile($event)"/>
+        </label>
+        <button class="btn btn-primary" @click="triggerRun()" :disabled="runStatus==='running'">
+          <template x-if="runStatus==='running'"><span class="spinner"></span></template>
+          <template x-if="runStatus!=='running'"><svg width="13" height="13" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M5 3l14 9-14 9V3z"/></svg></template>
+          <span x-text="runStatus==='running'?'Running…':'Run Replenishment'"></span>
+        </button>
+
+      </div>
+    </div>
+
+    <!-- ══ DASHBOARD ══ -->
+    <div class="page-body" x-show="page==='replen'">
+      <div class="run-banner" x-show="runStatus==='running'" x-transition>
+        <div class="run-spinner"></div> Pipeline running &mdash; refreshes automatically.
+      </div>
+      <div class="snapshot-banner" x-show="runStatus==='success'">
+        &#128337; Stock snapshot at <strong>08:00 WIB</strong> &middot; Cycle <span x-text="lastRun.cycleId"></span> &middot; <span x-text="lastRun.date"></span>
+      </div>
+      <!-- Nothing has been calculated yet on page load — no auto-run. This banner replaces the KPIs/tables'
+           misleading "all zero" look with an explicit call to action instead. -->
+      <div class="snapshot-banner" x-show="runStatus==='idle'" style="background:var(--gray-lt);border-color:var(--border);color:var(--muted);">
+        &#9203; No replenishment calculated yet &mdash; click <strong>Run Replenishment</strong> above to generate today's orders.
+      </div>
+
+      <!-- KPI Cards (3) -->
+      <div class="kpi-grid">
+        <div class="kpi-card">
+          <div class="kpi-icon green"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg></div>
+          <div class="kpi-label">Total Order Value</div>
+          <div class="kpi-value green" x-text="'Rp '+kpi.totalValue.toLocaleString('id-ID',{maximumFractionDigits:0})"></div>
+          <div class="kpi-sub">All active pharmacies</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-icon amber"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2"/></svg></div>
+          <div class="kpi-label">Unique SKUs Ordered</div>
+          <div class="kpi-value" x-text="uniqueSkusOrdered.toLocaleString()"></div>
+          <div class="kpi-sub">of <span x-text="kpi.totalSkus"></span> total</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-icon purple"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"/></svg></div>
+          <div class="kpi-label">Active Pharmacies</div>
+          <div class="kpi-value" x-text="pharmacies.filter(p=>p.active).length"></div>
+          <div class="kpi-sub">of <span x-text="pharmacies.length"></span> total</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-icon red"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/></svg></div>
+          <div class="kpi-label">Flagged (L7D)</div>
+          <div class="kpi-value" style="display:flex;gap:16px;align-items:baseline;font-size:22px;">
+            <span style="display:inline-flex;align-items:center;gap:5px;" title="Red: position >30% over L7D sales — possible overstock">
+              <span class="flag-dot-red"></span><span style="color:var(--danger);" x-text="orders.filter(r=>r.l7dFlag).length"></span>
+            </span>
+            <span style="display:inline-flex;align-items:center;gap:5px;" title="Yellow: position <30% of L7D sales — possible underestimate / stockout risk">
+              <span class="flag-dot-yellow"></span><span style="color:var(--yellow);" x-text="orders.filter(r=>r.l7dUnderFlag).length"></span>
+            </span>
+          </div>
+          <div class="kpi-sub">Red = overstock risk, Yellow = underestimate risk</div>
+        </div>
+      </div>
+
+      <!-- Two-col: Product View + Pharmacy View -->
+      <div class="two-col">
+        <!-- LEFT: Product / SKU View -->
+        <div class="card">
+          <div class="card-header">
+            <div><div class="card-title">Product View</div><div style="font-size:11px;color:var(--muted);">Click a row to drill in &rarr;</div></div>
+            <div style="display:flex;gap:6px;">
+              <input class="filter-input" placeholder="Search SKU&hellip;" x-model="skuViewSearch" style="width:120px;height:28px;font-size:11px;" id="sku-view-search"/>
+              <button class="filter-chip" :class="{active:skuFlagFilter}" @click="skuFlagFilter=!skuFlagFilter" id="sku-flag-filter-btn">&#9888;&#65039; Flagged</button>
+              <select class="filter-select" style="height:28px;font-size:11px;" x-model="skuClsFilter" id="sku-cls-filter">
+                <option value="">All Classes</option>
+                <template x-for="c in allClasses" :key="c"><option x-text="c"></option></template>
+              </select>
+              <button class="btn btn-csv btn-sm" style="font-size:11px;" @click="downloadProductViewCSV()" title="Download this table (current filters applied) as CSV" id="download-product-view-csv">&#11015;</button>
+            </div>
+          </div>
+          <div style="overflow-x:auto;max-height:420px;overflow-y:auto;">
+            <table class="data-table">
+              <!-- Flag column hidden per request — underlying s.flagged data/getter is untouched,
+                   just not rendered (still used by the Flagged filter chip above the table). -->
+              <thead><tr><th>SKU</th><th>Product Name</th><th>Class</th><th style="text-align:right;">L7D Sales</th><th style="text-align:right;">Replenish Qty</th><th style="text-align:right;"># PHB</th></tr></thead>
+              <tbody>
+                <template x-for="s in filteredSkuView" :key="s.sku">
+                  <tr class="clickable" @click="selectProduct(s.sku)">
+                    <td class="mono" x-text="s.sku"></td>
+                    <td style="color:var(--muted);" x-text="productName(s.sku)||'—'"></td>
+                    <td><span class="abc-tag" :class="'t-'+s.abcxyz.toLowerCase()" x-text="s.abcxyz"></span></td>
+                    <td class="right" x-text="s.l7d.toLocaleString()"></td>
+                    <td class="right" style="font-weight:600;" x-text="s.replenishQty.toLocaleString()"></td>
+                    <td class="right" x-text="s.pharmacyCount"></td>
+                  </tr>
+                </template>
+                <tr x-show="filteredSkuView.length===0"><td colspan="6" class="empty">No SKUs match.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- RIGHT: Pharmacy View -->
+        <div class="card">
+          <div class="card-header">
+            <div><div class="card-title">Pharmacy View</div><div style="font-size:11px;color:var(--muted);">Click a row to drill in &rarr;</div></div>
+            <button class="btn btn-csv btn-sm" style="font-size:11px;" @click="downloadPharmacyViewCSV()" title="Download this table as CSV" id="download-pharmacy-view-csv">&#11015; Download</button>
+          </div>
+          <div style="overflow-x:auto;max-height:420px;overflow-y:auto;">
+            <table class="data-table">
+              <!-- Top Class column hidden per request — underlying p.topClass data is untouched. -->
+              <thead><tr><th>Pharmacy</th><th style="text-align:right;">Unique SKUs</th><th style="text-align:right;">Order Value</th><th style="text-align:right;">Flags</th></tr></thead>
+              <tbody>
+                <template x-for="p in pharmacySummary" :key="p.id">
+                  <tr class="clickable" @click="selectPharmacy(p.id)">
+                    <td><div style="font-weight:600;" x-text="p.name"></div><div style="font-size:10px;color:var(--muted);" x-text="'ID: '+p.id"></div></td>
+                    <td class="right" style="font-weight:600;" x-text="p.orderedSkus"></td>
+                    <td class="right" style="font-weight:700;" x-text="'Rp '+p.value.toLocaleString('id-ID',{maximumFractionDigits:0})"></td>
+                    <td class="right"><span x-show="p.flagCount>0" class="flag-pill" x-text="p.flagCount"></span><span x-show="p.flagCount===0" class="flag-pill-off">&mdash;</span></td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- ══ ORDERS ══ -->
+    <div class="page-body" x-show="page==='orders'" style="padding-top:16px;">
+      <div class="card">
+        <div class="card-header"><div class="card-title">Replenishment Orders</div><button class="btn btn-ghost" style="font-size:11px;" @click="downloadOrderCSV()">&#11015; Export CSV</button></div>
+        <div class="filters">
+          <input class="filter-input" placeholder="Search SKU or pharmacy&hellip;" x-model="oFilter.search" @input="oPage=1" id="order-search"/>
+          <select class="filter-select" x-model="oFilter.pharmacy" @change="oPage=1" id="order-pharm-filter">
+            <option value="">All Pharmacies</option>
+            <template x-for="p in pharmacies" :key="p.id"><option :value="p.id" x-text="p.id+' – '+p.name"></option></template>
+          </select>
+          <select class="filter-select" x-model="oFilter.cls" @change="oPage=1" id="order-cls-filter">
+            <option value="">All Classes</option>
+            <template x-for="c in allClasses" :key="c"><option x-text="c"></option></template>
+          </select>
+          <button class="filter-chip" :class="{active:oFilter.flagged}" @click="oFilter.flagged=!oFilter.flagged;oPage=1" id="order-flag-filter">&#9888;&#65039; Flagged only</button>
+          <button class="filter-chip" :class="{active:oFilter.scm}" @click="oFilter.scm=!oFilter.scm;oPage=1" style="color:var(--blue);" id="order-scm-filter">&#127981; SCM Ino only</button>
+          <div class="filter-count" x-text="filteredOrders.length+' rows'"></div>
+        </div>
+        <div style="overflow-x:auto;">
+          <table class="data-table">
+            <thead><tr><th>Pharmacy</th><th>SKU</th><th>Product Name</th><th>Class</th><th style="text-align:right;">L7D Sales</th><th style="text-align:right;">On Hand</th><th style="text-align:right;">Ordered</th><th style="text-align:right;">Value</th><th>Status</th><th style="text-align:center;">Flag</th><th>SCM</th></tr></thead>
+            <tbody>
+              <template x-for="r in paginatedOrders" :key="r.id">
+                <tr>
+                  <td><div style="font-weight:500;" x-text="r.pharmacyName"></div><div style="font-size:10px;color:var(--muted);" x-text="r.pharmacyId"></div></td>
+                  <td class="mono" x-text="r.productCode"></td>
+                  <td style="color:var(--muted);" x-text="productName(r.productCode)||'—'"></td>
+                  <td><span class="abc-tag" :class="'t-'+r.abcxyz.toLowerCase()" x-text="r.abcxyz"></span></td>
+                  <td class="right" x-text="r.l7dSales.toLocaleString()"></td>
+                  <td class="right" x-text="r.onHand.toLocaleString()"></td>
+                  <td class="right" style="font-weight:600;" x-text="r.finalOrderedQty!=null?r.finalOrderedQty.toLocaleString():'—'"></td>
+                  <td class="right" x-text="r.finalOrderValue>0?'Rp '+r.finalOrderValue.toLocaleString('id-ID',{maximumFractionDigits:0}):'—'"></td>
+                  <td><span class="status-tag" :class="{'st-order':r.finalSt==='ordered','st-over':r.finalSt==='overstock','st-ntr':r.finalSt==='no-need','st-hold':r.finalSt==='hold','st-inactive':r.finalSt==='not-active','st-manual':r.finalSt==='manual'}" x-text="r.finalStatusRaw"></span></td>
+                  <td><span x-show="r.finalFlagged" class="flag-pill">&#9888;&#65039;</span><span x-show="!r.finalFlagged" style="color:var(--muted);">&mdash;</span></td>
+                  <td><span x-show="r.scmIno" class="scm-pill">SCM</span><span x-show="!r.scmIno" style="color:var(--muted);">&mdash;</span></td>
+                </tr>
+              </template>
+              <tr x-show="paginatedOrders.length===0"><td colspan="11" class="empty">No rows match filters.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="pagination">
+          <div class="pagination-info">Showing <span x-text="Math.min((oPage-1)*10+1,filteredOrders.length)"></span>&ndash;<span x-text="Math.min(oPage*10,filteredOrders.length)"></span> of <span x-text="filteredOrders.length"></span></div>
+          <div class="page-btns">
+            <button class="page-btn" @click="oPage--" :disabled="oPage===1">&lsaquo;</button>
+            <template x-for="p in oTotalPages.slice(0,7)" :key="p"><button class="page-btn" :class="{active:p===oPage}" @click="oPage=p" x-text="p"></button></template>
+            <button class="page-btn" @click="oPage++" :disabled="oPage===oTotalPages.length">&rsaquo;</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══ PHARMACY DETAIL ══ -->
+    <div class="page-body" x-show="page==='pharmacyDetail'" style="padding-top:16px;">
+      <div class="detail-back-btn" @click="page='replen'" id="pharm-detail-back">
+        <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7"/></svg>
+        Back to Replen
+      </div>
+      <template x-if="selectedPharmacy">
+        <div>
+          <div class="detail-header">
+            <div class="detail-header-info">
+              <h2 x-text="selectedPharmacy.name"></h2>
+              <p>ID: <span x-text="selectedPharmacy.id"></span> &nbsp;&middot;&nbsp;
+                <span class="phb-badge-active" x-show="selectedPharmacy.active">Active</span>
+                <span class="phb-badge-off" x-show="!selectedPharmacy.active">Inactive</span>
+                &nbsp;&middot;&nbsp; Snapshot 08:00 WIB</p>
+            </div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;">
+              <button class="metabase-btn" style="border:none;cursor:pointer;" @click="showFormulaModal=true" id="formula-link-pharmacy">
+                <svg width="12" height="12" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 7h6m-6 4h6m-6 4h4M5 3h14a2 2 0 012 2v14a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2z"/></svg>
+                View Formulas
+              </button>
+              <button class="btn btn-sm" :class="detailEditMode?'btn-primary':'btn-ghost'" @click="detailEditMode=!detailEditMode" id="edit-mode-btn">
+                <svg width="12" height="12" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+                <span x-text="detailEditMode?'&#10003; Exit Edit Mode':'&#9999;&#65039; Edit Mode (LT)'"></span>
+              </button>
+            </div>
+          </div>
+
+          <!-- LT Edit Comparison Banner -->
+          <div x-show="detailEditMode" style="margin-bottom:12px;padding:12px 16px;background:var(--surface);border:1px solid var(--border);border-left:4px solid var(--accent);border-radius:8px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;">
+            <div style="display:flex;gap:20px;align-items:center;">
+              <div><span style="font-size:11px;color:var(--muted);display:block;">Baseline Order Value (Original LT)</span><strong style="font-size:14px;color:var(--text);" x-text="'Rp ' + (pharmacyLtComparison?pharmacyLtComparison.origVal:0).toLocaleString('id-ID',{maximumFractionDigits:0})"></strong></div>
+              <div style="font-size:16px;color:var(--muted);">&rarr;</div>
+              <div><span style="font-size:11px;color:var(--muted);display:block;">Edited Order Value (New LT)</span><strong style="font-size:14px;color:var(--accent);" x-text="'Rp ' + (pharmacyLtComparison?pharmacyLtComparison.newVal:0).toLocaleString('id-ID',{maximumFractionDigits:0})"></strong></div>
+              <div>
+                <span style="font-size:11px;color:var(--muted);display:block;">Net Impact</span>
+                <span class="abc-tag" :style="pharmacyLtComparison&&pharmacyLtComparison.valDiff>0?'background:var(--accent-lt);color:var(--accent);':'background:var(--gray-lt);color:var(--muted);'" x-text="(pharmacyLtComparison && pharmacyLtComparison.valDiff>=0?'+':'') + 'Rp ' + (pharmacyLtComparison?pharmacyLtComparison.valDiff:0).toLocaleString('id-ID',{maximumFractionDigits:0}) + ' (' + (pharmacyLtComparison?pharmacyLtComparison.pctDiff:0) + '%)'"></span>
+              </div>
+            </div>
+            <div style="display:flex;gap:8px;align-items:center;">
+              <span style="font-size:11px;color:var(--muted);" x-text="(pharmacyLtComparison?pharmacyLtComparison.editedCount:0) + ' SKUs edited'"></span>
+              <button class="btn btn-ghost btn-sm" style="font-size:11px;" @click="resetPharmacyLtEdits()" x-show="pharmacyLtComparison && pharmacyLtComparison.editedCount>0">&#215; Reset LT Edits</button>
+              <!-- Closes the loop discussed earlier: LT edits only ever lived in-browser and were wiped
+                   on refresh/re-run. This downloads every edited SKU across ALL pharmacies this session
+                   (not just the one currently open) as lt_override.csv, matching the exact format
+                   run_csv_replenish.py now reads (pharmacy_id,item_code,lead_time,updated_by,updated_at,reason).
+                   Still a manual hand-off — drop the downloaded file into data/ before the next real run —
+                   until a real backend exists to do this automatically. -->
+              <button class="btn btn-csv btn-sm" style="font-size:11px;" @click="downloadLtOverrides()" title="Download every LT edit made this session (all pharmacies) as lt_override.csv">&#11015; Download LT Overrides</button>
+            </div>
+          </div>
+
+          <div class="detail-kpis">
+            <div class="detail-kpi"><div class="detail-kpi-label">Order Value</div><div class="detail-kpi-value" style="color:var(--accent);font-size:18px;" x-text="'Rp '+(selectedPharmacyOrders.filter(r=>r.st==='ordered').reduce((s,r)=>s+r.orderValue,0)).toLocaleString('id-ID',{maximumFractionDigits:0})"></div></div>
+            <div class="detail-kpi"><div class="detail-kpi-label">SKUs Ordered</div><div class="detail-kpi-value" x-text="selectedPharmacyOrders.filter(r=>r.st==='ordered').length"></div></div>
+            <div class="detail-kpi">
+              <div class="detail-kpi-label">Flagged (L7D)</div>
+              <div class="detail-kpi-value" style="display:flex;gap:12px;align-items:baseline;">
+                <span style="display:inline-flex;align-items:center;gap:4px;" title="Red: position >30% over L7D sales">
+                  <span class="flag-dot-red"></span><span style="color:var(--danger);" x-text="selectedPharmacyOrders.filter(r=>r.l7dFlag).length"></span>
+                </span>
+                <span style="display:inline-flex;align-items:center;gap:4px;" title="Yellow: position <30% of L7D sales">
+                  <span class="flag-dot-yellow"></span><span style="color:var(--yellow);" x-text="selectedPharmacyOrders.filter(r=>r.l7dUnderFlag).length"></span>
+                </span>
+              </div>
+            </div>
+            <div class="detail-kpi"><div class="detail-kpi-label">Total L7D</div><div class="detail-kpi-value" x-text="selectedPharmacyOrders.reduce((s,r)=>s+r.l7dSales,0).toLocaleString()"></div></div>
+          </div>
+          <div class="card">
+            <div class="card-header">
+              <div class="card-title">SKU Detail</div>
+              <div style="display:flex;gap:6px;align-items:center;">
+                <button class="filter-chip" :class="{'active-orange':detailFlagFilter}" @click="detailFlagFilter=!detailFlagFilter;detailPage=1" id="detail-flag-filter">Flagged</button>
+                <button class="filter-chip" :class="{'active-green':detailNeedsReplenFilter}" @click="detailNeedsReplenFilter=!detailNeedsReplenFilter;detailPage=1" id="detail-needs-replen-filter" title="Only show SKUs with a Replenish Qty (hide the ones marked &mdash;)">Needs Replen</button>
+                <button class="filter-chip" :class="{'active-purple':detailPlanoGapFilter}" @click="detailPlanoGapFilter=!detailPlanoGapFilter;detailPage=1" id="detail-plano-gap-filter" title="Rows where a planogram-driven override applied (floor or explicit hold-to-plano rule)">Plano Gap</button>
+                <input class="filter-input" placeholder="Search SKU&hellip;" x-model="detailSearch" @input="detailPage=1" style="width:130px;height:28px;" id="detail-search"/>
+                <button class="btn btn-csv btn-sm" style="font-size:11px;" @click="downloadPharmacyDetailCSV()" title="Download this table (current filters applied) as CSV" id="download-pharmacy-detail-csv">&#11015; Download</button>
+
+                <div style="font-size:11px;color:var(--muted);" x-text="filteredDetailOrders.length+' items'"></div>
+              </div>
+            </div>
+            <div style="overflow-x:auto;">
+              <table class="data-table" style="font-size:11px;">
+                <thead>
+                  <tr>
+                    <th class="sticky-col sku-col" style="left:0;">SKU</th>
+                    <th class="sticky-col product-name-sticky-col" style="left:96px;" title="From data/product_name.csv">Product Name</th>
+                    <th class="sticky-col class-col" style="left:266px;">Class</th>
+                    <th class="sticky-col lt-sticky-col" :class="{'lt-col-active':detailEditMode}" style="left:324px;text-align:right;" title="Adjustable Lead Time in Weeks — click the box to edit">LT <span x-show="detailEditMode">&#9999;&#65039;</span></th>
+                    <th style="text-align:right;" title="08:00 On-Hand (+ Transit)">Stock</th>
+                    <th style="text-align:right;" title="Min / Max Inventory Targets">Min / Max</th>
+                    <th x-show="detailEditMode" style="text-align:right;color:var(--muted);" title="Original Replenish Qty before LT Edit">Orig Replenish</th>
+                    <th style="text-align:right;font-weight:700;" title="Replenishment Quantity (sales units)">Replenish Qty</th>
+                    <th x-show="detailEditMode" style="text-align:right;" title="Net Qty Difference from LT Edit">Qty Impact</th>
+                    <th style="text-align:right;font-weight:700;" title="Replenishment Value in IDR">Replenish Amount</th>
+                    <th x-show="detailEditMode" style="text-align:right;" title="Manual override of the final ordered quantity">Edit Qty</th>
+                    <th style="text-align:center;" title="Left: L7D Flag — red if position exceeds L7D sales by 30%+ (overstock risk), yellow if position is under 30% of L7D sales (underestimate/stockout risk). Right: L30D Flag (position exceeds L30D sales)">Flags (L7D | L30D)</th>
+                    <th style="text-align:right;" title="Last 7 Days (1 Week) Sales Qty">L7D</th>
+                    <th style="text-align:right;" title="Last 30 Days (4 Weeks) Sales Qty">L30D</th>
+                    <th style="text-align:right;" title="Mean Weekly Demand">&mu; (Mean)</th>
+                    <th style="text-align:right;" title="Demand Standard Deviation">&sigma; (Std)</th>
+                    <th style="text-align:right;" title="Forecast Demand">FCST</th>
+                    <th style="text-align:right;" title="Safety / Buffer Stock">Buffer</th>
+                    <th style="text-align:right;" title="Planogram shelf target, converted to sales units (plano_unit_qty &times; conversion_factor)">Plano QTY</th>
+                    <th style="text-align:right;" title="Stock &divide; Plano QTY — under 0.6 lets a planogram-driven order through to TMP allocation; 0.6 or above suppresses it">Ratio</th>
+                    <th style="text-align:center;" title="Unconditional planogram floor — any SKU on the planogram gets bumped up if the target implies more is needed, never decreased">Plano Floor</th>
+                    <th style="text-align:center;" title="Explicit hold_to_plano.csv allowlist override — fully replaces the qty with the planogram gap for listed SKUs">Hold&rarr;Plano</th>
+                    <th style="text-align:center;" title="Stock-over-time drill-in in Metabase, filtered to this pharmacy + SKU">stock_ovt</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <template x-for="r in paginatedDetailOrders" :key="r.id">
+                    <tr :style="detailEditMode && r.origLeadTime!=null && r.leadTime!==r.origLeadTime ? 'background:#FEF3C7;' : ''">
+                      <td class="mono sticky-col sku-col" style="left:0;font-weight:600;" x-text="r.productCode"></td>
+                      <td class="sticky-col product-name-sticky-col" style="left:96px;color:var(--muted);" :title="productName(r.productCode)||''" x-text="productName(r.productCode)||'—'"></td>
+                      <td class="sticky-col class-col" style="left:266px;"><span class="abc-tag" :class="'t-'+r.abcxyz.toLowerCase()" x-text="r.abcxyz"></span></td>
+
+                      <!-- LT — the primary edit target, pinned right after SKU/Product Name/Class so it never needs horizontal scrolling -->
+                      <td class="right sticky-col lt-sticky-col" :class="{'lt-col-active':detailEditMode}" style="left:324px;">
+                        <span x-show="!detailEditMode" x-text="r.leadTime" style="font-weight:600;"></span>
+                        <div x-show="detailEditMode" class="lt-edit-cell">
+                          <div class="lt-stepper">
+                            <button type="button" class="lt-step-btn" @click="stepLT(r,-0.5)" title="Decrease LT by 0.5">&minus;</button>
+                            <input type="number" step="0.1" min="0.1" max="10" class="lt-input" x-model.number="r.leadTime" @change="recalcRow(r)" @focus="$event.target.select()" title="Edit Lead Time"/>
+                            <button type="button" class="lt-step-btn" @click="stepLT(r,0.5)" title="Increase LT by 0.5">&plus;</button>
+                          </div>
+                          <!-- Confirms r.leadTime into r.savedLeadTime — the live +/- above always recalcs
+                               the row instantly, but only a SAVED LT counts toward triggerRun()/
+                               downloadLtOverrides(); ticking the stepper up/down alone never queues anything. -->
+                          <button type="button" class="qty-save-btn lt-save-btn" :class="{'dirty': r.leadTime!==r.savedLeadTime, 'just-saved': r._ltJustSaved}"
+                                  :disabled="r.leadTime===r.savedLeadTime"
+                                  :title="r._ltJustSaved ? 'Saved' : (r.leadTime!==r.savedLeadTime ? 'Save this LT change' : 'No changes to save')"
+                                  @click="confirmLT(r)">
+                            <span x-show="!r._ltJustSaved">&#10003; Save LT</span>
+                            <span x-show="r._ltJustSaved">Saved</span>
+                          </button>
+                        </div>
+                      </td>
+
+                      <td class="right" style="font-weight:600;" x-text="(r.onHand + r.inTransit).toLocaleString()"></td>
+                      <td class="right formula-cell" style="font-size:10px;color:var(--muted);"
+                          @mouseenter="showFormulaTooltip($event, minMaxFormula(r))" @mouseleave="hideFormulaTooltip()">
+                        <span x-text="r.minStock"></span> / <span x-text="r.maxStock" style="font-weight:600;color:var(--text);"></span>
+                      </td>
+
+                      <!-- Artificial Column: Original Replenish Qty before LT Edit -->
+                      <td x-show="detailEditMode" class="right" style="color:var(--muted);font-weight:500;" x-text="r.origReplenishVal != null ? r.origReplenishVal.toLocaleString() : '—'"></td>
+
+                      <!-- Current / Recalculated Replenish Qty -->
+                      <td class="right" style="font-weight:700;font-size:12px;color:var(--accent);" x-text="r.st==='ordered'&&r.replenishValue>0?r.replenishValue.toLocaleString():'—'"></td>
+
+                      <!-- Artificial Column: Net Qty Impact -->
+                      <td x-show="detailEditMode" class="right" style="font-weight:700;">
+                        <span x-show="r.origReplenishVal != null && (r.replenishValue - r.origReplenishVal) !== 0"
+                              :style="(r.replenishValue - r.origReplenishVal) > 0 ? 'color:var(--accent);' : 'color:var(--orange);'"
+                              x-text="((r.replenishValue - r.origReplenishVal) > 0 ? '+' : '') + (r.replenishValue - r.origReplenishVal).toLocaleString()">
+                        </span>
+                        <span x-show="r.origReplenishVal == null || (r.replenishValue - r.origReplenishVal) === 0" style="color:var(--muted);">&mdash;</span>
+                      </td>
+
+                      <td class="right" style="font-weight:600;color:var(--text);" x-text="r.orderValue>0?'Rp '+r.orderValue.toLocaleString('id-ID',{maximumFractionDigits:0}):'—'"></td>
+
+                      <td x-show="detailEditMode">
+                        <div class="qty-edit-wrap" :class="{'just-saved-flash': r._justSaved}">
+                          <input type="number" class="qty-edit-input" :class="{'dirty': r.editQty!=null && r.editQty!==r.replenishValue}"
+                                 :value="r.editQty!=null?r.editQty:r.replenishValue"
+                                 @input="r.editQty=parseInt($event.target.value)||0"
+                                 @focus="$event.target.select()" min="0" title="Type a new qty, then click the check to save"/>
+                          <button class="qty-save-btn" :class="{'dirty': r.editQty!=null && r.editQty!==r.replenishValue, 'just-saved': r._justSaved}"
+                                  :disabled="r.editQty==null || r.editQty===r.replenishValue"
+                                  :title="r._justSaved ? 'Saved' : (r.editQty!=null && r.editQty!==r.replenishValue ? 'Save this override' : 'No changes to save')"
+                                  @click="saveEditQty(r)">
+                            <span x-show="!r._justSaved">&#10003;</span>
+                            <span x-show="r._justSaved">Saved</span>
+                          </button>
+                        </div>
+                      </td>
+
+                      <td style="text-align:center;">
+                        <div style="display:inline-flex;gap:4px;align-items:center;" :title="'L7D Ratio: ' + (r.l7dRatio||'0') + 'x | L30D Ratio: ' + (r.l30dRatio||'0') + 'x'">
+                          <span x-show="r.l7dFlag" class="flag-dot-red" title="L7D Flagged (position &gt;30% over L7D sales) — possible overstock"></span>
+                          <span x-show="r.l7dUnderFlag" class="flag-dot-yellow" title="L7D Underestimate risk (position &lt;30% of L7D sales) — possible demand underestimate / stockout risk"></span>
+                          <span x-show="!r.l7dFlag && !r.l7dUnderFlag" class="flag-dot-green" title="L7D Normal"></span>
+                          <span x-show="r.l30dFlag" class="flag-dot-red" title="L30D Flagged (>100%)"></span>
+                          <span x-show="!r.l30dFlag" class="flag-dot-green" title="L30D Normal"></span>
+                        </div>
+                      </td>
+
+                      <td class="right" x-text="r.l7dSales.toLocaleString()"></td>
+                      <td class="right" style="color:var(--muted);" x-text="(r.l30dSales||0).toLocaleString()"></td>
+                      <td class="right" x-text="Number(r.meanQty).toFixed(2)"></td>
+                      <td class="right" x-text="Number(r.stdQty).toFixed(2)"></td>
+                      <td class="right" style="font-weight:600;" x-text="Number(r.forecastQty).toFixed(2)"></td>
+                      <td class="right formula-cell" style="color:var(--purple);font-weight:600;"
+                          @mouseenter="showFormulaTooltip($event, bufferFormula(r))" @mouseleave="hideFormulaTooltip()">
+                        <span x-text="r.bufferStock"></span>
+                      </td>
+
+                      <!-- Plano QTY — the planogram's box target converted to sales units, so it's
+                           directly comparable to the Stock column instead of looking like the same
+                           unit by coincidence (see the "6 vs 6" mix-up this was added to prevent). -->
+                      <td class="right" style="font-size:11px;"
+                          :title="!isNaN(r.planoUnitQty) ? ('Plano target: '+r.planoUnitQty+' box(es) x conversion factor '+r.conversionFactor) : 'Not on the planogram for this pharmacy'">
+                        <span x-show="!isNaN(r.planoUnitQty)" x-text="Math.round(r.planoUnitQty*r.conversionFactor).toLocaleString()"></span>
+                        <span x-show="isNaN(r.planoUnitQty)" style="color:var(--muted);">&mdash;</span>
+                      </td>
+                      <!-- Ratio = Stock / Plano QTY. Orange highlight when it's under the 0.6 cutoff the
+                           pipeline actually uses (apply_plano_stock_ratio_gate) — under 0.6 the row is
+                           genuinely under-stocked relative to its own plano target and proceeds to TMP
+                           allocation; at/above 0.6 it's suppressed to 0 regardless of what Plano Floor/
+                           Hold→Plano computed. -->
+                      <td class="right" style="font-size:11px;" title="Stock &divide; Plano QTY — under 0.6 lets the order through to TMP allocation, 0.6+ suppresses it to 0">
+                        <span x-show="r.planoStockRatio!=null" :style="r.planoStockRatio<0.6?'color:var(--orange);font-weight:700;':'color:var(--muted);'" x-text="r.planoStockRatio!=null?(r.planoStockRatio*100).toFixed(0)+'%':''"></span>
+                        <span x-show="r.planoStockRatio==null" style="color:var(--muted);">&mdash;</span>
+                      </td>
+
+                      <td style="text-align:center;"><span x-show="r.planoUnitGapApplied" class="abc-tag" style="background:var(--purple-lt);color:var(--purple);" title="Bumped up by the unconditional planogram floor">Yes</span><span x-show="!r.planoUnitGapApplied" style="color:var(--muted);">&mdash;</span></td>
+                      <td style="text-align:center;"><span x-show="r.holdToPlanoApplied" class="abc-tag" style="background:var(--purple-lt);color:var(--purple);" title="Replaced by the explicit hold_to_plano.csv rule">Yes</span><span x-show="!r.holdToPlanoApplied" style="color:var(--muted);">&mdash;</span></td>
+                      <td style="text-align:center;"><a :href="stockOvtUrl(r)" target="_blank" class="stock-ovt-link" title="Stock over time in Metabase for this pharmacy + SKU">Stock OVT &#8599;</a></td>
+                    </tr>
+                  </template>
+                  <tr x-show="filteredDetailOrders.length===0"><td colspan="23" class="empty">No items match.</td></tr>
+                </tbody>
+              </table>
+            </div>
+            
+            <!-- Pagination Controls -->
+            <div style="padding:10px 16px;border-top:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;background:var(--surface);font-size:12px;color:var(--muted);">
+              <div>
+                Showing <strong style="color:var(--text);" x-text="detailPageSize==='all' ? '1–'+filteredDetailOrders.length : Math.min((detailPage-1)*(parseInt(detailPageSize)||50)+1, filteredDetailOrders.length) + '–' + Math.min(detailPage*(parseInt(detailPageSize)||50), filteredDetailOrders.length)"></strong> of <strong style="color:var(--text);" x-text="filteredDetailOrders.length"></strong> SKUs
+              </div>
+              <div style="display:flex;gap:12px;align-items:center;">
+                <div style="display:flex;gap:6px;align-items:center;">
+                  <span>Per page:</span>
+                  <select class="form-select" style="width:70px;padding:2px 6px;font-size:11px;height:26px;" x-model="detailPageSize" @change="detailPage=1">
+                    <option value="25">25</option>
+                    <option value="50">50</option>
+                    <option value="100">100</option>
+                    <option value="250">250</option>
+                    <option value="all">All</option>
+                  </select>
+                </div>
+                <div style="display:flex;gap:4px;align-items:center;" x-show="detailPageSize!=='all' && totalDetailPages>1">
+                  <button class="btn" style="padding:2px 8px;font-size:11px;" :disabled="detailPage===1" @click="detailPage=1">&laquo;</button>
+                  <button class="btn" style="padding:2px 8px;font-size:11px;" :disabled="detailPage===1" @click="detailPage--">&lsaquo; Prev</button>
+                  <span style="padding:0 6px;">Page <strong style="color:var(--text);" x-text="detailPage"></strong> of <strong style="color:var(--text);" x-text="totalDetailPages"></strong></span>
+                  <button class="btn" style="padding:2px 8px;font-size:11px;" :disabled="detailPage>=totalDetailPages" @click="detailPage++">Next &rsaquo;</button>
+                  <button class="btn" style="padding:2px 8px;font-size:11px;" :disabled="detailPage>=totalDetailPages" @click="detailPage=totalDetailPages">&raquo;</button>
+                </div>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      </template>
+
+    </div>
+
+    <!-- ══ PRODUCT DETAIL (drilled in from Dashboard → Product View: "what pharmacy gets what"
+         for one fixed SKU — mirrors Pharmacy Detail's structure exactly, just transposed) ══ -->
+    <div class="page-body" x-show="page==='productDetail'" style="padding-top:16px;">
+      <div class="detail-back-btn" @click="page='replen'" id="product-detail-back">
+        <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7"/></svg>
+        Back to Replen
+      </div>
+      <template x-if="selectedProduct">
+        <div>
+          <div class="detail-header">
+            <div class="detail-header-info">
+              <h2 x-text="selectedProduct.sku"></h2>
+              <p x-show="productName(selectedProduct.sku)" style="font-size:12.5px;font-weight:500;color:var(--text);margin-bottom:2px;" x-text="productName(selectedProduct.sku)"></p>
+              <p>Ordered by <span x-text="selectedProductOrders.filter(r=>r.st==='ordered').length"></span> of <span x-text="selectedProductOrders.length"></span> pharmacies &nbsp;&middot;&nbsp; Snapshot 08:00 WIB</p>
+            </div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;">
+              <button class="metabase-btn" style="border:none;cursor:pointer;" @click="showFormulaModal=true" id="formula-link-product">
+                <svg width="12" height="12" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 7h6m-6 4h6m-6 4h4M5 3h14a2 2 0 012 2v14a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2z"/></svg>
+                View Formulas
+              </button>
+              <button class="btn btn-sm" :class="productDetailEditMode?'btn-primary':'btn-ghost'" @click="productDetailEditMode=!productDetailEditMode" id="product-edit-mode-btn">
+                <svg width="12" height="12" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+                <span x-text="productDetailEditMode?'&#10003; Exit Edit Mode':'&#9999;&#65039; Edit Mode (LT)'"></span>
+              </button>
+            </div>
+          </div>
+
+          <!-- LT Edit Comparison Banner — same shape as Pharmacy Detail's, scoped to this SKU's rows -->
+          <div x-show="productDetailEditMode" style="margin-bottom:12px;padding:12px 16px;background:var(--surface);border:1px solid var(--border);border-left:4px solid var(--accent);border-radius:8px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;">
+            <div style="display:flex;gap:20px;align-items:center;">
+              <div><span style="font-size:11px;color:var(--muted);display:block;">Baseline Order Value (Original LT)</span><strong style="font-size:14px;color:var(--text);" x-text="'Rp ' + (productLtComparison?productLtComparison.origVal:0).toLocaleString('id-ID',{maximumFractionDigits:0})"></strong></div>
+              <div style="font-size:16px;color:var(--muted);">&rarr;</div>
+              <div><span style="font-size:11px;color:var(--muted);display:block;">Edited Order Value (New LT)</span><strong style="font-size:14px;color:var(--accent);" x-text="'Rp ' + (productLtComparison?productLtComparison.newVal:0).toLocaleString('id-ID',{maximumFractionDigits:0})"></strong></div>
+              <div>
+                <span style="font-size:11px;color:var(--muted);display:block;">Net Impact</span>
+                <span class="abc-tag" :style="productLtComparison&&productLtComparison.valDiff>0?'background:var(--accent-lt);color:var(--accent);':'background:var(--gray-lt);color:var(--muted);'" x-text="(productLtComparison && productLtComparison.valDiff>=0?'+':'') + 'Rp ' + (productLtComparison?productLtComparison.valDiff:0).toLocaleString('id-ID',{maximumFractionDigits:0}) + ' (' + (productLtComparison?productLtComparison.pctDiff:0) + '%)'"></span>
+              </div>
+            </div>
+            <div style="display:flex;gap:8px;align-items:center;">
+              <span style="font-size:11px;color:var(--muted);" x-text="(productLtComparison?productLtComparison.editedCount:0) + ' pharmacies edited'"></span>
+              <button class="btn btn-ghost btn-sm" style="font-size:11px;" @click="resetProductLtEdits()" x-show="productLtComparison && productLtComparison.editedCount>0">&#215; Reset LT Edits</button>
+              <!-- Same session-wide download as Pharmacy Detail — downloadLtOverrides() scans ALL
+                   edited rows in this.orders regardless of which detail view made the edit. -->
+              <button class="btn btn-csv btn-sm" style="font-size:11px;" @click="downloadLtOverrides()" title="Download every LT edit made this session (all pharmacies/SKUs) as lt_override.csv">&#11015; Download LT Overrides</button>
+            </div>
+          </div>
+
+          <div class="detail-kpis">
+            <div class="detail-kpi"><div class="detail-kpi-label">Order Value</div><div class="detail-kpi-value" style="color:var(--accent);font-size:18px;" x-text="'Rp '+(selectedProductOrders.filter(r=>r.st==='ordered').reduce((s,r)=>s+r.orderValue,0)).toLocaleString('id-ID',{maximumFractionDigits:0})"></div></div>
+            <div class="detail-kpi"><div class="detail-kpi-label">Pharmacies Ordering</div><div class="detail-kpi-value" x-text="selectedProductOrders.filter(r=>r.st==='ordered').length"></div></div>
+            <div class="detail-kpi">
+              <div class="detail-kpi-label">Flagged (L7D)</div>
+              <div class="detail-kpi-value" style="display:flex;gap:12px;align-items:baseline;">
+                <span style="display:inline-flex;align-items:center;gap:4px;" title="Red: position >30% over L7D sales">
+                  <span class="flag-dot-red"></span><span style="color:var(--danger);" x-text="selectedProductOrders.filter(r=>r.l7dFlag).length"></span>
+                </span>
+                <span style="display:inline-flex;align-items:center;gap:4px;" title="Yellow: position <30% of L7D sales">
+                  <span class="flag-dot-yellow"></span><span style="color:var(--yellow);" x-text="selectedProductOrders.filter(r=>r.l7dUnderFlag).length"></span>
+                </span>
+              </div>
+            </div>
+            <div class="detail-kpi"><div class="detail-kpi-label">Total L7D</div><div class="detail-kpi-value" x-text="selectedProductOrders.reduce((s,r)=>s+r.l7dSales,0).toLocaleString()"></div></div>
+          </div>
+          <div class="card">
+            <div class="card-header">
+              <div class="card-title">Pharmacy Detail</div>
+              <div style="display:flex;gap:6px;align-items:center;">
+                <button class="filter-chip" :class="{'active-orange':productDetailFlagFilter}" @click="productDetailFlagFilter=!productDetailFlagFilter;productDetailPage=1" id="product-detail-flag-filter">Flagged</button>
+                <button class="filter-chip" :class="{'active-green':productDetailNeedsReplenFilter}" @click="productDetailNeedsReplenFilter=!productDetailNeedsReplenFilter;productDetailPage=1" id="product-detail-needs-replen-filter" title="Only show pharmacies with a Replenish Qty (hide the ones marked &mdash;)">Needs Replen</button>
+                <button class="filter-chip" :class="{'active-purple':productDetailPlanoGapFilter}" @click="productDetailPlanoGapFilter=!productDetailPlanoGapFilter;productDetailPage=1" id="product-detail-plano-gap-filter" title="Rows where a planogram-driven override applied (floor or explicit hold-to-plano rule)">Plano Gap</button>
+                <input class="filter-input" placeholder="Search Pharmacy&hellip;" x-model="productDetailSearch" @input="productDetailPage=1" style="width:150px;height:28px;" id="product-detail-search"/>
+                <button class="btn btn-csv btn-sm" style="font-size:11px;" @click="downloadProductDetailCSV()" title="Download this table (current filters applied) as CSV" id="download-product-detail-csv">&#11015; Download</button>
+
+                <div style="font-size:11px;color:var(--muted);" x-text="filteredProductDetailOrders.length+' items'"></div>
+              </div>
+            </div>
+            <div style="overflow-x:auto;">
+              <table class="data-table" style="font-size:11px;">
+                <thead>
+                  <tr>
+                    <th class="sticky-col pharm-col" style="left:0;">Pharmacy</th>
+                    <th class="sticky-col class-col" style="left:170px;">Class</th>
+                    <th class="sticky-col lt-sticky-col" :class="{'lt-col-active':productDetailEditMode}" style="left:220px;text-align:right;" title="Adjustable Lead Time in Weeks — click the box to edit">LT <span x-show="productDetailEditMode">&#9999;&#65039;</span></th>
+                    <th style="text-align:right;" title="08:00 On-Hand (+ Transit)">Stock</th>
+                    <th style="text-align:right;" title="Min / Max Inventory Targets">Min / Max</th>
+                    <th x-show="productDetailEditMode" style="text-align:right;color:var(--muted);" title="Original Replenish Qty before LT Edit">Orig Replenish</th>
+                    <th style="text-align:right;font-weight:700;" title="Replenishment Quantity (sales units)">Replenish Qty</th>
+                    <th x-show="productDetailEditMode" style="text-align:right;" title="Net Qty Difference from LT Edit">Qty Impact</th>
+                    <th style="text-align:right;font-weight:700;" title="Replenishment Value in IDR">Replenish Amount</th>
+                    <th x-show="productDetailEditMode" style="text-align:right;" title="Manual override of the final ordered quantity">Edit Qty</th>
+                    <th style="text-align:center;" title="Left: L7D Flag — red if position exceeds L7D sales by 30%+ (overstock risk), yellow if position is under 30% of L7D sales (underestimate/stockout risk). Right: L30D Flag (position exceeds L30D sales)">Flags (L7D | L30D)</th>
+                    <th style="text-align:right;" title="Last 7 Days (1 Week) Sales Qty">L7D</th>
+                    <th style="text-align:right;" title="Last 30 Days (4 Weeks) Sales Qty">L30D</th>
+                    <th style="text-align:right;" title="Mean Weekly Demand">&mu; (Mean)</th>
+                    <th style="text-align:right;" title="Demand Standard Deviation">&sigma; (Std)</th>
+                    <th style="text-align:right;" title="Forecast Demand">FCST</th>
+                    <th style="text-align:right;" title="Safety / Buffer Stock">Buffer</th>
+                    <th style="text-align:right;" title="Planogram shelf target, converted to sales units (plano_unit_qty &times; conversion_factor)">Plano QTY</th>
+                    <th style="text-align:right;" title="Stock &divide; Plano QTY — under 0.6 lets a planogram-driven order through to TMP allocation; 0.6 or above suppresses it">Ratio</th>
+                    <th style="text-align:center;" title="Unconditional planogram floor — any SKU on the planogram gets bumped up if the target implies more is needed, never decreased">Plano Floor</th>
+                    <th style="text-align:center;" title="Explicit hold_to_plano.csv allowlist override — fully replaces the qty with the planogram gap for listed SKUs">Hold&rarr;Plano</th>
+                    <th style="text-align:center;" title="Stock-over-time drill-in in Metabase, filtered to this pharmacy + SKU">stock_ovt</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <template x-for="r in paginatedProductDetailOrders" :key="r.id">
+                    <tr :style="productDetailEditMode && r.origLeadTime!=null && r.leadTime!==r.origLeadTime ? 'background:#FEF3C7;' : ''">
+                      <td class="sticky-col pharm-col" style="left:0;">
+                        <div style="font-weight:600;" x-text="r.pharmacyName"></div>
+                        <div style="font-size:10px;color:var(--muted);" x-text="'ID: '+r.pharmacyId"></div>
+                      </td>
+                      <td class="sticky-col class-col" style="left:170px;"><span class="abc-tag" :class="'t-'+r.abcxyz.toLowerCase()" x-text="r.abcxyz"></span></td>
+
+                      <!-- LT — same edit control as Pharmacy Detail, reuses stepLT/recalcRow verbatim -->
+                      <td class="right sticky-col lt-sticky-col" :class="{'lt-col-active':productDetailEditMode}" style="left:220px;">
+                        <span x-show="!productDetailEditMode" x-text="r.leadTime" style="font-weight:600;"></span>
+                        <div x-show="productDetailEditMode" class="lt-edit-cell">
+                          <div class="lt-stepper">
+                            <button type="button" class="lt-step-btn" @click="stepLT(r,-0.5)" title="Decrease LT by 0.5">&minus;</button>
+                            <input type="number" step="0.1" min="0.1" max="10" class="lt-input" x-model.number="r.leadTime" @change="recalcRow(r)" @focus="$event.target.select()" title="Edit Lead Time"/>
+                            <button type="button" class="lt-step-btn" @click="stepLT(r,0.5)" title="Increase LT by 0.5">&plus;</button>
+                          </div>
+                          <!-- Confirms r.leadTime into r.savedLeadTime — see the comment on the identical
+                               control in the Pharmacy Detail table. -->
+                          <button type="button" class="qty-save-btn lt-save-btn" :class="{'dirty': r.leadTime!==r.savedLeadTime, 'just-saved': r._ltJustSaved}"
+                                  :disabled="r.leadTime===r.savedLeadTime"
+                                  :title="r._ltJustSaved ? 'Saved' : (r.leadTime!==r.savedLeadTime ? 'Save this LT change' : 'No changes to save')"
+                                  @click="confirmLT(r)">
+                            <span x-show="!r._ltJustSaved">&#10003; Save LT</span>
+                            <span x-show="r._ltJustSaved">Saved</span>
+                          </button>
+                        </div>
+                      </td>
+
+                      <td class="right" style="font-weight:600;" x-text="(r.onHand + r.inTransit).toLocaleString()"></td>
+                      <td class="right formula-cell" style="font-size:10px;color:var(--muted);"
+                          @mouseenter="showFormulaTooltip($event, minMaxFormula(r))" @mouseleave="hideFormulaTooltip()">
+                        <span x-text="r.minStock"></span> / <span x-text="r.maxStock" style="font-weight:600;color:var(--text);"></span>
+                      </td>
+
+                      <td x-show="productDetailEditMode" class="right" style="color:var(--muted);font-weight:500;" x-text="r.origReplenishVal != null ? r.origReplenishVal.toLocaleString() : '—'"></td>
+
+                      <td class="right" style="font-weight:700;font-size:12px;color:var(--accent);" x-text="r.st==='ordered'&&r.replenishValue>0?r.replenishValue.toLocaleString():'—'"></td>
+
+                      <td x-show="productDetailEditMode" class="right" style="font-weight:700;">
+                        <span x-show="r.origReplenishVal != null && (r.replenishValue - r.origReplenishVal) !== 0"
+                              :style="(r.replenishValue - r.origReplenishVal) > 0 ? 'color:var(--accent);' : 'color:var(--orange);'"
+                              x-text="((r.replenishValue - r.origReplenishVal) > 0 ? '+' : '') + (r.replenishValue - r.origReplenishVal).toLocaleString()">
+                        </span>
+                        <span x-show="r.origReplenishVal == null || (r.replenishValue - r.origReplenishVal) === 0" style="color:var(--muted);">&mdash;</span>
+                      </td>
+
+                      <td class="right" style="font-weight:600;color:var(--text);" x-text="r.orderValue>0?'Rp '+r.orderValue.toLocaleString('id-ID',{maximumFractionDigits:0}):'—'"></td>
+
+                      <td x-show="productDetailEditMode">
+                        <div class="qty-edit-wrap" :class="{'just-saved-flash': r._justSaved}">
+                          <input type="number" class="qty-edit-input" :class="{'dirty': r.editQty!=null && r.editQty!==r.replenishValue}"
+                                 :value="r.editQty!=null?r.editQty:r.replenishValue"
+                                 @input="r.editQty=parseInt($event.target.value)||0"
+                                 @focus="$event.target.select()" min="0" title="Type a new qty, then click the check to save"/>
+                          <button class="qty-save-btn" :class="{'dirty': r.editQty!=null && r.editQty!==r.replenishValue, 'just-saved': r._justSaved}"
+                                  :disabled="r.editQty==null || r.editQty===r.replenishValue"
+                                  :title="r._justSaved ? 'Saved' : (r.editQty!=null && r.editQty!==r.replenishValue ? 'Save this override' : 'No changes to save')"
+                                  @click="saveEditQty(r)">
+                            <span x-show="!r._justSaved">&#10003;</span>
+                            <span x-show="r._justSaved">Saved</span>
+                          </button>
+                        </div>
+                      </td>
+
+                      <td style="text-align:center;">
+                        <div style="display:inline-flex;gap:4px;align-items:center;" :title="'L7D Ratio: ' + (r.l7dRatio||'0') + 'x | L30D Ratio: ' + (r.l30dRatio||'0') + 'x'">
+                          <span x-show="r.l7dFlag" class="flag-dot-red" title="L7D Flagged (position &gt;30% over L7D sales) — possible overstock"></span>
+                          <span x-show="r.l7dUnderFlag" class="flag-dot-yellow" title="L7D Underestimate risk (position &lt;30% of L7D sales) — possible demand underestimate / stockout risk"></span>
+                          <span x-show="!r.l7dFlag && !r.l7dUnderFlag" class="flag-dot-green" title="L7D Normal"></span>
+                          <span x-show="r.l30dFlag" class="flag-dot-red" title="L30D Flagged (>100%)"></span>
+                          <span x-show="!r.l30dFlag" class="flag-dot-green" title="L30D Normal"></span>
+                        </div>
+                      </td>
+
+                      <td class="right" x-text="r.l7dSales.toLocaleString()"></td>
+                      <td class="right" style="color:var(--muted);" x-text="(r.l30dSales||0).toLocaleString()"></td>
+                      <td class="right" x-text="Number(r.meanQty).toFixed(2)"></td>
+                      <td class="right" x-text="Number(r.stdQty).toFixed(2)"></td>
+                      <td class="right" style="font-weight:600;" x-text="Number(r.forecastQty).toFixed(2)"></td>
+                      <td class="right formula-cell" style="color:var(--purple);font-weight:600;"
+                          @mouseenter="showFormulaTooltip($event, bufferFormula(r))" @mouseleave="hideFormulaTooltip()">
+                        <span x-text="r.bufferStock"></span>
+                      </td>
+
+                      <!-- Plano QTY — the planogram's box target converted to sales units, so it's
+                           directly comparable to the Stock column instead of looking like the same
+                           unit by coincidence (see the "6 vs 6" mix-up this was added to prevent). -->
+                      <td class="right" style="font-size:11px;"
+                          :title="!isNaN(r.planoUnitQty) ? ('Plano target: '+r.planoUnitQty+' box(es) x conversion factor '+r.conversionFactor) : 'Not on the planogram for this pharmacy'">
+                        <span x-show="!isNaN(r.planoUnitQty)" x-text="Math.round(r.planoUnitQty*r.conversionFactor).toLocaleString()"></span>
+                        <span x-show="isNaN(r.planoUnitQty)" style="color:var(--muted);">&mdash;</span>
+                      </td>
+                      <!-- Ratio = Stock / Plano QTY. Orange highlight when it's under the 0.6 cutoff the
+                           pipeline actually uses (apply_plano_stock_ratio_gate) — under 0.6 the row is
+                           genuinely under-stocked relative to its own plano target and proceeds to TMP
+                           allocation; at/above 0.6 it's suppressed to 0 regardless of what Plano Floor/
+                           Hold→Plano computed. -->
+                      <td class="right" style="font-size:11px;" title="Stock &divide; Plano QTY — under 0.6 lets the order through to TMP allocation, 0.6+ suppresses it to 0">
+                        <span x-show="r.planoStockRatio!=null" :style="r.planoStockRatio<0.6?'color:var(--orange);font-weight:700;':'color:var(--muted);'" x-text="r.planoStockRatio!=null?(r.planoStockRatio*100).toFixed(0)+'%':''"></span>
+                        <span x-show="r.planoStockRatio==null" style="color:var(--muted);">&mdash;</span>
+                      </td>
+
+                      <td style="text-align:center;"><span x-show="r.planoUnitGapApplied" class="abc-tag" style="background:var(--purple-lt);color:var(--purple);" title="Bumped up by the unconditional planogram floor">Yes</span><span x-show="!r.planoUnitGapApplied" style="color:var(--muted);">&mdash;</span></td>
+                      <td style="text-align:center;"><span x-show="r.holdToPlanoApplied" class="abc-tag" style="background:var(--purple-lt);color:var(--purple);" title="Replaced by the explicit hold_to_plano.csv rule">Yes</span><span x-show="!r.holdToPlanoApplied" style="color:var(--muted);">&mdash;</span></td>
+                      <td style="text-align:center;"><a :href="stockOvtUrl(r)" target="_blank" class="stock-ovt-link" title="Stock over time in Metabase for this pharmacy + SKU">Stock OVT &#8599;</a></td>
+                    </tr>
+                  </template>
+                  <tr x-show="filteredProductDetailOrders.length===0"><td colspan="22" class="empty">No pharmacies match.</td></tr>
+                </tbody>
+              </table>
+            </div>
+
+            <!-- Pagination Controls -->
+            <div style="padding:10px 16px;border-top:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;background:var(--surface);font-size:12px;color:var(--muted);">
+              <div>
+                Showing <strong style="color:var(--text);" x-text="productDetailPageSize==='all' ? '1–'+filteredProductDetailOrders.length : Math.min((productDetailPage-1)*(parseInt(productDetailPageSize)||50)+1, filteredProductDetailOrders.length) + '–' + Math.min(productDetailPage*(parseInt(productDetailPageSize)||50), filteredProductDetailOrders.length)"></strong> of <strong style="color:var(--text);" x-text="filteredProductDetailOrders.length"></strong> pharmacies
+              </div>
+              <div style="display:flex;gap:12px;align-items:center;">
+                <div style="display:flex;gap:6px;align-items:center;">
+                  <span>Per page:</span>
+                  <select class="form-select" style="width:70px;padding:2px 6px;font-size:11px;height:26px;" x-model="productDetailPageSize" @change="productDetailPage=1">
+                    <option value="25">25</option>
+                    <option value="50">50</option>
+                    <option value="100">100</option>
+                    <option value="250">250</option>
+                    <option value="all">All</option>
+                  </select>
+                </div>
+                <div style="display:flex;gap:4px;align-items:center;" x-show="productDetailPageSize!=='all' && totalProductDetailPages>1">
+                  <button class="btn" style="padding:2px 8px;font-size:11px;" :disabled="productDetailPage===1" @click="productDetailPage=1">&laquo;</button>
+                  <button class="btn" style="padding:2px 8px;font-size:11px;" :disabled="productDetailPage===1" @click="productDetailPage--">&lsaquo; Prev</button>
+                  <span style="padding:0 6px;">Page <strong style="color:var(--text);" x-text="productDetailPage"></strong> of <strong style="color:var(--text);" x-text="totalProductDetailPages"></strong></span>
+                  <button class="btn" style="padding:2px 8px;font-size:11px;" :disabled="productDetailPage>=totalProductDetailPages" @click="productDetailPage++">Next &rsaquo;</button>
+                  <button class="btn" style="padding:2px 8px;font-size:11px;" :disabled="productDetailPage>=totalProductDetailPages" @click="productDetailPage=totalProductDetailPages">&raquo;</button>
+                </div>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      </template>
+
+    </div>
+
+    <!-- ══ PHARMACIES (Settings: toggle active/inactive) ══ -->
+    <div class="page-body" x-show="page==='pharmacies'" style="padding-top:16px;">
+      <div style="font-size:12px;color:var(--muted);margin-bottom:12px;">Toggle which pharmacies are included in replenishment runs. To view SKU-level detail, drill in from the <strong style="color:var(--text);">Dashboard &rarr; Pharmacy View</strong>.</div>
+      <div class="card">
+        <div class="card-header">
+          <div><div class="card-title">Pharmacy Settings</div><div style="font-size:11px;color:var(--muted);">Active pharmacies are included in the next run</div></div>
+          <div style="display:flex;gap:8px;">
+            <button class="btn btn-ghost" style="font-size:11px;" @click="pharmacies.forEach(p=>p.active=true);savePharmacies();showToast('All pharmacies set to Active')">All On</button>
+            <button class="btn btn-ghost" style="font-size:11px;" @click="pharmacies.forEach(p=>p.active=false);savePharmacies();showToast('All pharmacies set to Inactive')">All Off</button>
+          </div>
+        </div>
+        <div style="overflow-x:auto;">
+          <table class="data-table">
+            <thead><tr><th>ID</th><th>Name</th><th>Include in Run</th></tr></thead>
+            <tbody>
+              <template x-for="p in pharmacies" :key="p.id">
+                <tr>
+                  <td class="mono" x-text="p.id"></td>
+                  <td style="font-weight:500;" x-text="p.name"></td>
+                  <td>
+                    <div style="display:flex;align-items:center;gap:10px;">
+                      <label class="toggle"><input type="checkbox" :checked="p.active" @change="p.active=$event.target.checked;savePharmacies();showToast(p.name+' – '+(p.active?'Active':'Inactive'))"/><span class="toggle-slider"></span></label>
+                      <span :class="p.active?'phb-badge-active':'phb-badge-off'" x-text="p.active?'Active':'Inactive'"></span>
+                    </div>
+                  </td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══ CONTROL CENTER ══ -->
+    <div class="page-body" x-show="page==='control'" style="padding-top:16px;">
+      <div class="tabs">
+        <div class="tab" :class="{active:ctrl==='hold'}" @click="ctrl='hold'">Hold / Stock-out</div>
+        <div class="tab" :class="{active:ctrl==='holdplano'}" @click="ctrl='holdplano'">Hold to Planogram</div>
+        <div class="tab" :class="{active:ctrl==='config'}" @click="ctrl='config'">Special Config</div>
+        <div class="tab" :class="{active:ctrl==='additional'}" @click="ctrl='additional'">Additional Orders</div>
+      </div>
+      <div style="padding:16px 0;" x-show="ctrl==='hold'">
+        <div class="card"><div class="card-header"><div class="card-title">Hold Rules</div><div class="import-zone"><button class="btn-csv btn" @click="downloadTemplate('hold')">&#11015; Template</button><label class="btn-csv btn" style="cursor:pointer;">&#128194; Import CSV<input type="file" accept=".csv" style="display:none;" @change="importCSV($event,'hold')"/></label></div></div>
+          <div class="card-body">
+            <template x-for="(r,i) in holdRules" :key="i"><div class="ctrl-row"><span class="ctrl-chip" x-text="r.sku"></span><span style="font-size:11px;color:var(--muted);" x-text="r.type"></span><span style="font-size:11px;color:var(--muted);" x-text="r.scope==='all'?'All pharmacies':'PHB: '+r.pharmacies"></span><button class="btn-danger btn" style="margin-left:auto;" @click="holdRules.splice(i,1);_saveHoldRules();showToast('Rule removed')">Remove</button></div></template>
+            <div x-show="holdRules.length===0" class="empty" style="padding:16px;">No hold rules.</div>
+          </div>
+          <div style="padding:14px;border-top:1px solid var(--border);background:var(--gray-lt);"><div class="form-row"><div class="form-group"><div class="form-label">SKU</div><input class="form-input" x-model="newHold.sku" placeholder="ID100035-1C"/></div><div class="form-group"><div class="form-label">Type</div><select class="form-select" x-model="newHold.type"><option>hold</option><option>hold to stock-out</option></select></div><div class="form-group"><div class="form-label">Scope</div><select class="form-select" x-model="newHold.scope"><option value="all">All</option><option value="specific">Specific</option></select></div><div class="form-group" x-show="newHold.scope==='specific'"><div class="form-label">PHB IDs</div><input class="form-input" x-model="newHold.pharmacies" placeholder="14001,14002"/></div><div class="form-group" style="justify-content:flex-end;"><button class="btn btn-primary" @click="addHoldRule()">+ Add</button></div></div></div>
+        </div>
+      </div>
+      <div style="padding:16px 0;" x-show="ctrl==='holdplano'">
+        <div class="card"><div class="card-header"><div class="card-title">Hold to Planogram</div></div>
+          <div class="card-body">
+            <template x-for="(r,i) in holdPlanoRules" :key="i"><div class="ctrl-row"><span class="ctrl-chip" x-text="r.sku"></span><span style="font-size:11px;color:var(--purple);font-weight:600;">hold to planogram</span><span style="font-size:11px;color:var(--muted);" x-text="r.scope==='all'?'All':'PHB: '+r.pharmacies"></span><button class="btn-danger btn" style="margin-left:auto;" @click="holdPlanoRules.splice(i,1);_saveHoldPlanoRules();showToast('Rule removed')">Remove</button></div></template>
+            <div x-show="holdPlanoRules.length===0" class="empty" style="padding:16px;">No rules.</div>
+          </div>
+          <div style="padding:14px;border-top:1px solid var(--border);background:var(--gray-lt);"><div class="form-row"><div class="form-group"><div class="form-label">SKU</div><input class="form-input" x-model="newHoldPlano.sku" placeholder="ID102089-1"/></div><div class="form-group"><div class="form-label">Scope</div><select class="form-select" x-model="newHoldPlano.scope"><option value="all">All</option><option value="specific">Specific</option></select></div><div class="form-group" x-show="newHoldPlano.scope==='specific'"><div class="form-label">PHB IDs</div><input class="form-input" x-model="newHoldPlano.pharmacies"/></div><div class="form-group" style="justify-content:flex-end;"><button class="btn btn-primary" @click="addHoldPlanoRule()">+ Add</button></div></div></div>
+
+        </div>
+      </div>
+      <div style="padding:16px 0;" x-show="ctrl==='config'">
+        <div class="card"><div class="card-header"><div class="card-title">Special Config</div></div>
+          <div class="card-body">
+            <template x-for="(r,i) in configRules" :key="i"><div class="ctrl-row"><span class="ctrl-chip" x-text="r.category"></span><span style="font-size:11px;color:var(--muted);">LT: <strong x-text="r.leadTime"></strong></span><span style="font-size:11px;color:var(--muted);">Mode: <strong x-text="r.mode"></strong></span><button class="btn-danger btn" style="margin-left:auto;" @click="configRules.splice(i,1);_saveConfigRules();showToast('Config removed')">Remove</button></div></template>
+          </div>
+          <div style="padding:14px;border-top:1px solid var(--border);background:var(--gray-lt);"><div class="form-row"><div class="form-group"><div class="form-label">Class</div><select class="form-select" x-model="newConfig.category"><template x-for="c in allClasses" :key="c"><option x-text="c"></option></template></select></div><div class="form-group"><div class="form-label">Lead Time</div><input class="form-input" x-model="newConfig.leadTime" style="width:70px;"/></div><div class="form-group"><div class="form-label">Mode</div><select class="form-select" x-model="newConfig.mode"><option>max</option><option>min</option></select></div><div class="form-group" style="justify-content:flex-end;"><button class="btn btn-primary" @click="addConfig()">+ Add</button></div></div></div>
+        </div>
+      </div>
+      <div style="padding:16px 0;" x-show="ctrl==='additional'">
+        <div class="card"><div class="card-header"><div class="card-title">Additional Orders (Non-SCM)</div></div>
+          <div class="card-body">
+            <template x-for="(r,i) in additionalOrders" :key="i"><div class="ctrl-row"><span class="ctrl-chip" x-text="r.pharmacy"></span><span class="ctrl-chip" style="background:var(--purple-lt);color:var(--purple);" x-text="r.sku"></span><span style="font-size:11px;color:var(--muted);">Qty: <strong x-text="r.qty"></strong></span><button class="btn-danger btn" style="margin-left:auto;" @click="additionalOrders.splice(i,1);_saveAdditionalOrders();showToast('Order removed')">Remove</button></div></template>
+          </div>
+          <div style="padding:14px;border-top:1px solid var(--border);background:var(--gray-lt);"><div class="form-row"><div class="form-group"><div class="form-label">Pharmacy</div><select class="form-select" x-model="newAdd.pharmacy"><template x-for="p in pharmacies" :key="p.id"><option :value="p.id" x-text="p.id+' – '+p.name"></option></template></select></div><div class="form-group"><div class="form-label">SKU</div><input class="form-input" x-model="newAdd.sku"/></div><div class="form-group"><div class="form-label">Qty</div><input class="form-input" type="number" x-model="newAdd.qty" style="width:80px;"/></div><div class="form-group" style="justify-content:flex-end;"><button class="btn btn-primary" @click="addAdditional()">+ Add</button></div></div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══ RUN HISTORY ══ -->
+    <div class="page-body" x-show="page==='history'" style="padding-top:16px;">
+      <div class="card"><div class="card-header"><div class="card-title">Run History</div></div>
+        <div style="overflow-x:auto;"><table class="data-table"><thead><tr><th>Cycle ID</th><th>By</th><th>Started At</th><th>Duration</th><th>Status</th></tr></thead><tbody>
+          <template x-for="r in runHistory" :key="r.id"><tr><td class="mono" x-text="r.cycleId"></td><td><span class="ctrl-chip" x-text="r.by"></span></td><td x-text="r.startedAt"></td><td x-text="r.duration"></td><td><span class="status-tag" :class="r.status==='success'?'st-order':'st-over'" x-text="r.status"></span></td></tr></template>
+        </tbody></table></div>
+      </div>
+    </div>
+
+    <!-- ══ ABC-XYZ ══ -->
+    <div class="page-body" x-show="page==='classification'" style="padding-top:16px;">
+      <div class="card"><div class="card-body empty"><div style="font-size:26px;margin-bottom:6px;">&#128202;</div>Classification detail view &mdash; plug in API endpoint to populate.</div></div>
+    </div>
+  </div>
+
+  <script>
+  function app(){return{
+    init(){
+      // Fundamental change: this used to calculate the full replenishment (processLoadedCSV over
+      // window.ORDERING_DATA) automatically on every page load/refresh. Now it does NOT — the page
+      // opens idle with no orders/KPIs computed. Calculation only happens when "Run Replenishment"
+      // is clicked (see triggerRun()). runHistory starts empty for the same reason: nothing has
+      // actually run yet, so there's nothing to log.
+      this.runHistory = [];
+
+      // If we just got here via a reload triggered by a REAL pipeline run (see triggerRun()),
+      // window.ORDERING_DATA on this page load is genuinely fresh output from run_csv_replenish.py —
+      // render it immediately as an already-completed run instead of sitting idle and making the
+      // user click Run Replenishment a second time for no reason.
+      const justRan = sessionStorage.getItem('replenJustRan');
+      if(justRan){
+        sessionStorage.removeItem('replenJustRan');
+        let info={};
+        try{ info=JSON.parse(justRan); }catch(e){}
+        if(window.ORDERING_DATA && window.ORDERING_DATA.length>0){
+          this.processLoadedCSV(window.ORDERING_DATA);
+        }
+        this._recordRunSuccess((info.duration!=null?info.duration:'?')+'s');
+        this.showToast('Pipeline completed'+(info.overrideRows?' — '+info.overrideRows+' LT override(s) applied':''));
+      }
+
+      // 0. Load the pharmacy list itself from store.csv (see loadPharmaciesFromStore()) — this
+      // must happen before/alongside everything else since the sidebar, dropdowns, Pharmacy
+      // Settings, and Pharmacy View all read this.pharmacies.
+      this.loadPharmaciesFromStore();
+
+      // 1. Fetch config.csv
+      fetch('./data/config.csv')
+        .then(r=>r.text())
+        .then(text=>{
+          if(text && window.Papa){
+            Papa.parse(text,{header:true,skipEmptyLines:true,complete:(res)=>{
+              if(res.data){
+                this.configRules = res.data.filter(r=>r.category).map(r=>({
+                  category: String(r.category).trim(),
+                  leadTime: String(r.lead_time||1.0).trim(),
+                  mode: String(r.tools||'max').trim(),
+                  scope: (r.applied_to && String(r.applied_to).trim().toLowerCase() !== 'all') ? 'specific' : 'all',
+                  pharmacies: r.applied_to || ''
+                }));
+              }
+            }});
+          }
+        }).catch(()=>{});
+
+      // 2. Fetch hold.csv
+      fetch('./data/hold.csv')
+        .then(r=>r.text())
+        .then(text=>{
+          if(text && window.Papa){
+            Papa.parse(text,{header:true,skipEmptyLines:true,complete:(res)=>{
+              if(res.data){
+                this.holdRules = res.data.filter(r=>r.sku).map(r=>({
+                  sku: String(r.sku).trim(),
+                  type: String(r.type||'hold').trim(),
+                  scope: (r.applied_to && String(r.applied_to).trim().toLowerCase() !== 'all') ? 'specific' : 'all',
+                  pharmacies: r.applied_to || ''
+                }));
+              }
+            }});
+          }
+        }).catch(()=>{});
+
+      // 3. Fetch hold_to_plano.csv
+      fetch('./data/hold_to_plano.csv')
+        .then(r=>r.text())
+        .then(text=>{
+          if(text && window.Papa){
+            Papa.parse(text,{header:true,skipEmptyLines:true,complete:(res)=>{
+              if(res.data){
+                this.holdPlanoRules = res.data.filter(r=>r.sku).map(r=>({
+                  sku: String(r.sku).trim(),
+                  type: 'hold to planogram',
+                  scope: (r.applied_to && String(r.applied_to).trim().toLowerCase() !== 'all') ? 'specific' : 'all',
+                  pharmacies: r.applied_to || ''
+                }));
+              }
+            }});
+          }
+        }).catch(()=>{});
+
+      // 4. Fetch product_name.csv — sku -> item_name lookup, shown as "Product Name" next to
+      // every SKU column across the app. Loaded async like the rules above, so on the very first
+      // render (window.ORDERING_DATA path, processed synchronously before this fetch resolves)
+      // names may render blank for a moment — kept as a live lookup (productName(sku) method,
+      // not baked into each row at parse time) specifically so it self-heals the instant this
+      // resolves, via Alpine's normal reactivity, instead of needing a second full re-parse.
+      fetch('./data/product_name.csv')
+        .then(r=>r.text())
+        .then(text=>{
+          if(text && window.Papa){
+            Papa.parse(text,{header:true,skipEmptyLines:true,complete:(res)=>{
+              if(res.data){
+                const map={};
+                res.data.forEach(r=>{
+                  if(r.item_code) map[String(r.item_code).trim()] = String(r.item_name||'').trim();
+                });
+                this.productNameMap = map;
+              }
+            }});
+          }
+        }).catch(()=>{});
+    },
+    page:'replen',ctrl:'hold',runStatus:'idle',oPage:1,
+
+    oFilter:{search:'',pharmacy:'',cls:'',flagged:false,scm:false},
+    skuFlagFilter:false,skuClsFilter:'',skuViewSearch:'',
+    detailSearch:'',detailFlagFilter:false,detailNeedsReplenFilter:false,detailPlanoGapFilter:false,detailEditMode:false,
+    // Product Detail — mirrors the Pharmacy Detail state above, but drilled in from Product View:
+    // "what pharmacy gets what" for one fixed SKU, instead of "what SKU gets what" for one pharmacy.
+    productDetailSearch:'',productDetailFlagFilter:false,productDetailNeedsReplenFilter:false,productDetailPlanoGapFilter:false,productDetailEditMode:false,
+    productDetailPage:1,productDetailPageSize:50,
+    selectedProduct:null,selectedProductOrders:[],
+    filterDate:new Date().toISOString().slice(0,10),
+    toast:{show:false,msg:''},selectedPharmacy:null,selectedPharmacyOrders:[],
+    hoverTooltip:{show:false,text:'',top:0,left:0},
+    showFormulaModal:false,
+    productNameMap:{},
+    lastRun:{time:'—',date:'—',cycleId:'—'},
+    pageTitle:{replen:'Replen',orders:'Orders',control:'Control Center',pharmacies:'Pharmacies',history:'Run History',classification:'ABC-XYZ',pharmacyDetail:'Pharmacy Detail',productDetail:'Product Detail'},
+    allClasses:['AX','AY','AZ','BX','BY','BZ','CX','CY','CZ','DX','EX'],
+    kpi:{totalValue:0,orderedSkus:0,totalSkus:0,totalRows:0},
+    // Loaded from data/store.csv in init() — see loadPharmaciesFromStore(). Used to be a hardcoded
+    // list of 32 entries typed directly here, which is exactly why pharmacy 14000 ("Mas Mansyur")
+    // never showed up anywhere despite having real sales data: it just wasn't in this literal list,
+    // and nothing here was ever connected to store.csv at all.
+    pharmacies:[],
+
+    orders:[],
+    holdRules:[],
+    holdPlanoRules:[],
+    configRules:[],
+    additionalOrders:[],
+    runHistory:[],
+    newHold:{sku:'',type:'hold',scope:'all',pharmacies:''},
+    newHoldPlano:{sku:'',scope:'all',pharmacies:''},
+    newConfig:{category:'AX',leadTime:'1.0',mode:'max',scope:'all',pharmacies:''},
+    newAdd:{pharmacy:'14001',sku:'',qty:''},
+    detailPage:1,
+    detailPageSize:50,
+
+
+    get uniqueSkusOrdered(){return new Set(this.orders.filter(r=>r.st==='ordered').map(r=>r.productCode)).size;},
+
+    get pharmacySummary(){
+      // The "active" toggle used to be purely cosmetic — this map included every pharmacy in
+      // `this.pharmacies` regardless of p.active, so an inactive store (e.g. Cilincing) still
+      // showed its full computed order value/SKU count here. Now inactive pharmacies are skipped
+      // entirely — matching what the pipeline itself does (run_csv_replenish.py excludes them
+      // before any calculation), so "Active pharmacies are included" is actually true here too.
+      const map={};
+      for(const p of this.pharmacies){if(!p.active)continue;map[p.id]={id:p.id,name:p.name,active:p.active,totalSkus:0,orderedSkus:0,value:0,flagCount:0,topClass:'AX'};}
+      const cc={};
+      for(const r of this.orders){
+        if(!map[r.pharmacyId])continue;
+        map[r.pharmacyId].totalSkus++;
+        if(r.st==='ordered'){map[r.pharmacyId].orderedSkus++;map[r.pharmacyId].value+=r.orderValue;}
+        if(r.flagged&&r.st==='ordered')map[r.pharmacyId].flagCount++;
+        const k=r.pharmacyId+'_'+r.abcxyz;cc[k]=(cc[k]||0)+1;
+      }
+      for(const id in map){let mx=0,tc='AX';for(const cls of this.allClasses){const k=id+'_'+cls;if((cc[k]||0)>mx){mx=cc[k]||0;tc=cls;}}map[id].topClass=tc;}
+      return Object.values(map).sort((a,b)=>parseInt(a.id)-parseInt(b.id));
+    },
+    get skuView(){
+      const map={};
+      for(const r of this.orders){
+        if(!map[r.productCode])map[r.productCode]={sku:r.productCode,abcxyz:r.abcxyz,l7d:0,replenishQty:0,orderValue:0,pharmacyCount:0,flagged:false};
+        map[r.productCode].l7d+=r.l7dSales;
+        if(r.st==='ordered'){map[r.productCode].replenishQty+=r.orderedQty||0;map[r.productCode].orderValue+=r.orderValue;map[r.productCode].pharmacyCount++;}
+      }
+      for(const s in map){const x=map[s];x.flagged=x.l7d>0&&(x.replenishQty/x.l7d)>1.30;}
+      return Object.values(map).sort((a,b)=>b.orderValue-a.orderValue);
+    },
+    get filteredSkuView(){
+      const q=this.skuViewSearch.trim().toLowerCase();
+      return this.skuView.filter(s=>(!this.skuFlagFilter||s.flagged)&&(!this.skuClsFilter||s.abcxyz===this.skuClsFilter)&&(!q||s.sku.toLowerCase().includes(q)));
+    },
+    get filteredOrders(){
+      const s=this.oFilter.search.toLowerCase();
+      return this.orders.filter(r=>{
+        // Orders = only rows that will actually replenish something (final qty > 0) — not an
+        // audit of every calculated row including overstock/no-need/hold/etc. That's what the
+        // ideal-side detail pages are for. Since finalSt is only ever NOT 'ordered' when
+        // finalOrderedQty<=0 (see processLoadedCSV), this is equivalent to "status === ordered"
+        // but doesn't need a Status dropdown to express it — there's nothing else to select.
+        if(r.finalOrderedQty<=0)return false;
+        if(s&&!r.productCode.toLowerCase().includes(s)&&!r.pharmacyName.toLowerCase().includes(s))return false;
+        if(this.oFilter.pharmacy&&r.pharmacyId!==this.oFilter.pharmacy)return false;
+        if(this.oFilter.cls&&r.abcxyz!==this.oFilter.cls)return false;
+        if(this.oFilter.flagged&&!r.finalFlagged)return false;
+        if(this.oFilter.scm&&!r.scmIno)return false;
+        return true;
+      });
+    },
+    get paginatedOrders(){const s=(this.oPage-1)*10;return this.filteredOrders.slice(s,s+10);},
+    get oTotalPages(){const n=Math.ceil(this.filteredOrders.length/10);return Array.from({length:Math.max(n,1)},(_,i)=>i+1);},
+    get filteredDetailOrders(){
+      const s=this.detailSearch.toLowerCase();
+      return this.selectedPharmacyOrders.filter(r=>{
+        if(s&&!r.productCode.toLowerCase().includes(s))return false;
+        if(this.detailFlagFilter&&!r.flagged)return false;
+        // Same condition the Replenish Qty column itself uses to decide between a real number and
+        // "—" (line ~628) — so this filter shows exactly the rows that aren't dashes.
+        if(this.detailNeedsReplenFilter&&!(r.st==='ordered'&&r.replenishValue>0))return false;
+        // OR logic — either mechanism having touched the row counts as "plano gap".
+        if(this.detailPlanoGapFilter&&!(r.planoUnitGapApplied||r.holdToPlanoApplied))return false;
+        return true;
+      });
+    },
+    get totalDetailPages(){
+      if(this.detailPageSize==='all')return 1;
+      const sz=parseInt(this.detailPageSize)||50;
+      return Math.max(1,Math.ceil(this.filteredDetailOrders.length/sz));
+    },
+    get paginatedDetailOrders(){
+      if(this.detailPageSize==='all')return this.filteredDetailOrders;
+      const sz=parseInt(this.detailPageSize)||50;
+      const start=(this.detailPage-1)*sz;
+      return this.filteredDetailOrders.slice(start,start+sz);
+    },
+    // Product Detail equivalents — same filter/paginate shape as the pharmacy-detail getters
+    // above, just searching by pharmacy name/id instead of SKU (selectedProductOrders is already
+    // scoped to one SKU, same as selectedPharmacyOrders is scoped to one pharmacy).
+    get filteredProductDetailOrders(){
+      const s=this.productDetailSearch.toLowerCase();
+      return this.selectedProductOrders.filter(r=>{
+        if(s&&!(r.pharmacyName.toLowerCase().includes(s)||r.pharmacyId.toLowerCase().includes(s)))return false;
+        if(this.productDetailFlagFilter&&!r.flagged)return false;
+        if(this.productDetailNeedsReplenFilter&&!(r.st==='ordered'&&r.replenishValue>0))return false;
+        if(this.productDetailPlanoGapFilter&&!(r.planoUnitGapApplied||r.holdToPlanoApplied))return false;
+        return true;
+      });
+    },
+    get totalProductDetailPages(){
+      if(this.productDetailPageSize==='all')return 1;
+      const sz=parseInt(this.productDetailPageSize)||50;
+      return Math.max(1,Math.ceil(this.filteredProductDetailOrders.length/sz));
+    },
+    get paginatedProductDetailOrders(){
+      if(this.productDetailPageSize==='all')return this.filteredProductDetailOrders;
+      const sz=parseInt(this.productDetailPageSize)||50;
+      const start=(this.productDetailPage-1)*sz;
+      return this.filteredProductDetailOrders.slice(start,start+sz);
+    },
+
+    stepLT(r,delta){
+      const cur=parseFloat(r.leadTime)||1.0;
+      let next=Math.round((cur+delta)*10)/10;
+      next=Math.max(0.1,Math.min(10,next));
+      r.leadTime=next;
+      this.recalcRow(r);
+    },
+    // Hover-tooltip content for the Buffer and Min/Max cells — each cell gets ONLY the formula(s)
+    // it actually displays (Buffer cell -> just the buffer derivation; Min/Max cell -> just Min and
+    // Max, treating buffer as a given number rather than re-deriving it) so the popup stays scoped
+    // to what you're pointing at instead of dumping the whole three-step chain every time.
+    bufferFormula(r){
+      const z=Number(r.zVal)||0;
+      const std=Number(r.stdQty)||0;
+      const lt=Number(r.leadTime)||1;
+      const f2=n=>Number(n).toFixed(2);
+      const raw=z*std*Math.sqrt(lt);
+      return 'Buffer Stock = ceil(Z x StdDev x sqrt(LT))\n'
+        +'  = ceil('+f2(z)+' x '+f2(std)+' x sqrt('+f2(lt)+'))\n'
+        +'  = ceil('+f2(raw)+')\n'
+        +'  = '+r.bufferStock;
+    },
+    minMaxFormula(r){
+      const fc=Number(r.forecastQty)||0;
+      const f2=n=>Number(n).toFixed(2);
+      const buffer=r.bufferStock;
+      const min=r.minStock;
+      const max=r.maxStock;
+      return 'Min Stock = ceil(Forecast + Buffer)\n'
+        +'  = ceil('+f2(fc)+' + '+buffer+')\n'
+        +'  = '+min+'\n\n'
+        +'Max Stock = ceil(Min + Forecast)\n'
+        +'  = ceil('+min+' + '+f2(fc)+')\n'
+        +'  = '+max;
+    },
+    // Positions the single shared floating tooltip (rendered once at the end of <body>, outside
+    // every scrolling ancestor) relative to the hovered cell. Flips above/below based on available
+    // viewport space and clamps horizontally so it never runs off-screen at either table edge.
+    showFormulaTooltip(evt, text){
+      const rect=evt.currentTarget.getBoundingClientRect();
+      const estW=260, estH=text.split('\n').length*17+20;
+      let top;
+      if(window.innerHeight - rect.bottom > estH + 12){
+        top = rect.bottom + 8;
+      } else {
+        top = Math.max(8, rect.top - estH - 8);
+      }
+      let left = rect.left + rect.width/2 - estW/2;
+      if(left < 8) left = 8;
+      if(left + estW > window.innerWidth - 8) left = window.innerWidth - 8 - estW;
+      this.hoverTooltip = {show:true, text, top, left};
+    },
+    hideFormulaTooltip(){
+      this.hoverTooltip.show = false;
+    },
+    recalcRow(r){
+      const lt=parseFloat(r.leadTime)||1.0;
+      r.leadTime=lt;
+      r.bufferStock=Math.ceil(r.zVal*r.stdQty*Math.sqrt(lt));
+      r.minStock=Math.ceil(r.forecastQty+r.bufferStock);
+      r.maxStock=Math.ceil(r.minStock+r.forecastQty);
+      const effective=(r.onHand||0)+(r.inTransit||0);
+      const shortage=Math.max(r.maxStock-effective,0);
+      const conv=r.conversionFactor||1.0;
+      const boxes=shortage > 0 ? Math.ceil(shortage/conv) : 0;
+      r.orderedQty=boxes;
+      // replenishValue must be the box-rounded sales-unit equivalent (boxes*conv), not the raw
+      // shortage — you can only ever actually receive whole boxes, and this has to match how
+      // processLoadedCSV computes the same field on initial load. Using the raw shortage here
+      // caused a real reported bug: LT 1->1.5 made maxStock rise (32->37) but the box count
+      // needed stayed at 2 either way (ceil(23/21)=ceil(28/21)=2) — Replenish Amount correctly
+      // stayed identical, but Replenish Qty wrongly dropped 42->28 since it showed raw shortage
+      // instead of boxes*conv (42 both times).
+      r.replenishValue=boxes*conv;
+      const price=r.unitPrice||0;
+      r.orderValue=boxes*price;
+      r.st=shortage>0?'ordered':(r.onHand>r.maxStock?'overstock':'no_need');
+
+      const totalPos = r.replenishValue + effective;
+      r.totalPosition = totalPos;
+      const l7d = r.l7dSales || 0;
+      const l30d = r.l30dSales || 0;
+      r.l7dRatio = l7d > 0 ? (totalPos / l7d).toFixed(2) : '0';
+      r.l30dRatio = l30d > 0 ? (totalPos / l30d).toFixed(2) : '0';
+      // ">30%" means replenish position exceeds L7D sales BY 30%, i.e. ratio > 1.30 (parity + 30%).
+      // Comparing the raw ratio to 0.30 instead flagged almost every order (30% of a week is ~2 days
+      // of cover — trivial to exceed), which is why this fired on nearly everything.
+      r.l7dFlag = l7d > 0 && parseFloat(r.l7dRatio) > 1.30;
+      // Opposite-direction signal — position under 30% of L7D sales, a possible demand
+      // underestimate / stockout risk rather than the overstock risk l7dFlag (red) covers.
+      r.l7dUnderFlag = l7d > 0 && parseFloat(r.l7dRatio) < 0.30;
+      r.l30dFlag = l30d > 0 && parseFloat(r.l30dRatio) > 1.00;
+      r.flagged = r.l7dFlag;
+      this.showToast('Recalculated '+r.productCode+' with LT: '+lt);
+    },
+    resetPharmacyLtEdits(){
+      if(!this.selectedPharmacyOrders)return;
+      this.selectedPharmacyOrders.forEach(r=>{
+        // Checks savedLeadTime too, not just the live leadTime — a row can have a CONFIRMED
+        // override sitting there (leadTime already back at origLeadTime after further tweaking,
+        // but savedLeadTime still holds an earlier confirmed value) and this should clear that too.
+        if(r.origLeadTime!=null && (r.leadTime!==r.origLeadTime || r.savedLeadTime!==r.origLeadTime)){
+          r.leadTime=r.origLeadTime;
+          r.savedLeadTime=r.origLeadTime;
+          this.recalcRow(r);
+        }
+      });
+      this.showToast('Reset all LT edits to baseline');
+    },
+    downloadLtOverrides(){
+      // Scans ALL pharmacies this session, not just the one currently open — an analyst may edit
+      // several stores before re-running the pipeline. Row objects keep living inside this.orders
+      // across pharmacy switches (selectedPharmacyOrders is just a filtered view), so a plain
+      // comparison against origLeadTime here reliably finds every edit made so far.
+      //
+      // Filters on savedLeadTime, not the live leadTime — a row you're still nudging with the +/-
+      // stepper (visible instantly on screen) shouldn't export until its Save button has actually
+      // been clicked. Exports savedLeadTime's value too, so an unconfirmed further tweak sitting in
+      // leadTime never leaks into the file.
+      const edited=this.orders.filter(r=>r.origLeadTime!=null && r.savedLeadTime!==r.origLeadTime);
+      if(edited.length===0){
+        this.showToast('No LT overrides to export — edit an LT value and click Save LT first');
+        return;
+      }
+      const stamp=new Date().toISOString().slice(0,19).replace('T',' ');
+      const header=['pharmacy_id','item_code','lead_time','updated_by','updated_at','reason'];
+      const rows=edited.map(r=>[r.pharmacyId,r.productCode,r.savedLeadTime,'dashboard_user',stamp,'Manual LT override via dashboard']);
+      const csv=[header,...rows].map(row=>row.join(',')).join('\n');
+      const blob=new Blob([csv],{type:'text/csv'});
+      const url=URL.createObjectURL(blob);
+      const a=document.createElement('a');
+      a.href=url;a.download='lt_override.csv';a.click();
+      URL.revokeObjectURL(url);
+      this.showToast('Downloaded '+edited.length+' LT override(s) — save as data/lt_override.csv before the next run');
+    },
+    get pharmacyLtComparison(){
+      if(!this.selectedPharmacyOrders)return null;
+      let origVal=0, newVal=0, origQty=0, newQty=0, editedCount=0;
+      this.selectedPharmacyOrders.forEach(r=>{
+        if(r.origLeadTime != null && r.leadTime !== r.origLeadTime) editedCount++;
+        origVal += (r.origOrderVal != null ? r.origOrderVal : r.orderValue);
+        newVal += r.orderValue;
+        origQty += (r.origOrderedQty != null ? r.origOrderedQty : (r.orderedQty||0));
+        newQty += (r.orderedQty||0);
+      });
+      const valDiff = newVal - origVal;
+      const qtyDiff = newQty - origQty;
+      const pctDiff = origVal > 0 ? ((valDiff / origVal) * 100).toFixed(1) : '0.0';
+      return { origVal, newVal, valDiff, qtyDiff, pctDiff, editedCount };
+    },
+    get productLtComparison(){
+      if(!this.selectedProductOrders)return null;
+      let origVal=0, newVal=0, origQty=0, newQty=0, editedCount=0;
+      this.selectedProductOrders.forEach(r=>{
+        if(r.origLeadTime != null && r.leadTime !== r.origLeadTime) editedCount++;
+        origVal += (r.origOrderVal != null ? r.origOrderVal : r.orderValue);
+        newVal += r.orderValue;
+        origQty += (r.origOrderedQty != null ? r.origOrderedQty : (r.orderedQty||0));
+        newQty += (r.orderedQty||0);
+      });
+      const valDiff = newVal - origVal;
+      const qtyDiff = newQty - origQty;
+      const pctDiff = origVal > 0 ? ((valDiff / origVal) * 100).toFixed(1) : '0.0';
+      return { origVal, newVal, valDiff, qtyDiff, pctDiff, editedCount };
+    },
+    resetProductLtEdits(){
+      if(!this.selectedProductOrders)return;
+      this.selectedProductOrders.forEach(r=>{
+        if(r.origLeadTime!=null && (r.leadTime!==r.origLeadTime || r.savedLeadTime!==r.origLeadTime)){
+          r.leadTime=r.origLeadTime;
+          r.savedLeadTime=r.origLeadTime;
+          this.recalcRow(r);
+        }
+      });
+      this.showToast('Reset all LT edits to baseline');
+    },
+    selectProduct(sku){
+      this.selectedProduct=this.skuView.find(s=>s.sku===sku)||{sku};
+      // Same caching pattern as selectPharmacy — compute once here instead of a live getter, so
+      // switching products or editing LT doesn't re-filter the full orders array on every read.
+      this.selectedProductOrders=this.orders.filter(r=>r.productCode===sku);
+      this.productDetailPage=1;this.productDetailEditMode=false;this.productDetailSearch='';
+      this.productDetailFlagFilter=false;this.productDetailNeedsReplenFilter=false;this.productDetailPlanoGapFilter=false;
+      this.page='productDetail';
+    },
+    selectPharmacy(id){
+      this.selectedPharmacy=this.pharmacies.find(p=>p.id===id)||null;
+      // Computed ONCE here instead of a live getter — this used to re-filter the full
+      // 40k+ row `orders` array on every single template read (every KPI tile, every
+      // banner stat, every LT/qty edit), which is why LT +/- felt laggy despite the
+      // increment itself being trivial math. Cache it; only refresh on pharmacy switch
+      // or CSV reload (see loadCSVFile).
+      this.selectedPharmacyOrders=this.selectedPharmacy?this.orders.filter(r=>r.pharmacyId===this.selectedPharmacy.id):[];
+      this.detailPage=1;this.detailEditMode=false;this.detailSearch='';this.detailFlagFilter=false;this.detailNeedsReplenFilter=false;this.detailPlanoGapFilter=false;this.page='pharmacyDetail';
+    },
+
+
+    metabaseUrl(pharmacyId){
+      const base='https://metabase.an.mclinica.com/question/7797-top-products-inofarma';
+      const p=new URLSearchParams({start_date:this.filterDate,end_date:this.filterDate,pharmacy_id:pharmacyId,principal:'',brand:'',parent_category:'',sku_code:'',product_name:''});
+      return base+'?'+p.toString();
+    },
+    // "stock_ovt" column link — per-row stock-over-time drill-in in Metabase, keyed by pharmacy
+    // name + SKU code (not pharmacy_id like metabaseUrl() above) since that's what this report
+    // filters on.
+    stockOvtUrl(r){
+      const base='https://metabase.an.mclinica.com/question/7133-stock-inofarma-overtime';
+      const p=new URLSearchParams({pharmacy_name:r.pharmacyName||'',sku_code:r.productCode||''});
+      return base+'?'+p.toString();
+    },
+    // Live lookup, not baked into each order row at parse time — see the comment on the
+    // product_name.csv fetch in init() for why. Returns '' (not the raw sku) when unknown, so
+    // callers can decide their own fallback/empty-state styling.
+    productName(sku){
+      return this.productNameMap[String(sku||'').trim()] || '';
+    },
+    saveEditQty(row){
+      // The "Replenish Qty" column (what you're actually comparing this against) is r.replenishValue,
+      // in sales units. The old version only wrote row.orderedQty/orderValue (boxes/amount) and left
+      // replenishValue untouched — so the qty you just saved never showed up in that column, in either
+      // edit or view mode, even though the save itself "worked". Update all three together, in sales units.
+      const q=row.editQty!=null?row.editQty:row.replenishValue;
+      const conv=row.conversionFactor||1.0;
+      const boxes=q>0?Math.ceil(q/conv):0;
+      row.replenishValue=q;
+      row.orderedQty=boxes;
+      row.orderValue=boxes*(row.unitPrice||0);
+      row.st=q>0?'ordered':'no_need';
+      row.editQty=null;
+      // Same bug, different field: the L7D/L30D flag dots are driven by totalPosition (replenish qty +
+      // on-hand + in-transit) vs L7D/L30D sales — computed in recalcRow() on LT edits, but this function
+      // never touched it, so overriding qty here left the flag showing the ratio from before your edit.
+      // Recompute it the same way recalcRow does, using the new qty.
+      const effective=(row.onHand||0)+(row.inTransit||0);
+      const totalPos=q+effective;
+      row.totalPosition=totalPos;
+      const l7d=row.l7dSales||0;
+      const l30d=row.l30dSales||0;
+      row.l7dRatio=l7d>0?(totalPos/l7d).toFixed(2):'0';
+      row.l30dRatio=l30d>0?(totalPos/l30d).toFixed(2):'0';
+      row.l7dFlag=l7d>0&&parseFloat(row.l7dRatio)>1.30;
+      row.l7dUnderFlag=l7d>0&&parseFloat(row.l7dRatio)<0.30;
+      row.l30dFlag=l30d>0&&parseFloat(row.l30dRatio)>1.00;
+      row.flagged=row.l7dFlag;
+      // Transient "just saved" confirmation right on the row — the toast alone wasn't enough signal
+      // that the save actually happened (it's easy to miss, and vanishes after 3s with no trace).
+      row._justSaved=true;
+      setTimeout(()=>{row._justSaved=false;},1400);
+      this.showToast('Saved '+row.productCode+' qty: '+q);
+    },
+    // Confirms the row's LIVE lead-time edit (r.leadTime, already driving the on-screen Qty/
+    // Amount/Impact via recalcRow on every stepper click) as something that should actually be
+    // included the next time you click Run Replenishment or Download LT Overrides. Until this is
+    // clicked, r.leadTime can be nudged up/down freely — the display updates instantly either way
+    // — but r.savedLeadTime (what triggerRun()/downloadLtOverrides() actually read) doesn't move.
+    confirmLT(row){
+      row.savedLeadTime=row.leadTime;
+      row._ltJustSaved=true;
+      setTimeout(()=>{row._ltJustSaved=false;},1400);
+      this.showToast('Saved '+row.productCode+' LT: '+row.leadTime);
+    },
+    downloadOrderCSV(){
+      // Was hand-joining with plain ','.join() with no quoting — any field containing a comma
+      // (product names routinely do, e.g. "HANSAPLAST PLESTER ROL KAIN @ 1,25 CM X 5 M") silently
+      // split into extra columns, shifting every column after it for that row. Route through the
+      // same _downloadTable() helper the other three exports already use, which quotes any field
+      // containing a comma/quote/newline instead of joining raw.
+      const h=['pharmacy_id','pharmacy_name','sku','product_name','abc_xyz','l7d_sales','on_hand','ordered_qty','order_value','status','flagged','scm_ino'];
+      const rows=this.filteredOrders.map(r=>[r.pharmacyId,r.pharmacyName,r.productCode,this.productName(r.productCode),r.abcxyz,r.l7dSales,r.onHand,r.finalOrderedQty??0,r.finalOrderValue,r.finalStatusRaw,r.finalFlagged?'yes':'no',r.scmIno?'yes':'no']);
+      this._downloadTable('ordering_'+this.filterDate+'.csv',h,rows);
+    },
+    // Exports the CURRENT filtered table as shown on screen (post search/flag/scm/needs-replen
+    // filters, all rows not just the current page) — reflects any in-session LT/qty edits too,
+    // since these read directly off the same live row objects the table renders.
+    _downloadTable(filename, header, rows){
+      const csv=[header,...rows].map(r=>r.map(v=>{
+        const s=String(v??'');
+        return /[",\n]/.test(s) ? '"'+s.replace(/"/g,'""')+'"' : s;
+      }).join(',')).join('\n');
+      const blob=new Blob([csv],{type:'text/csv'});
+      const url=URL.createObjectURL(blob);
+      const a=document.createElement('a');
+      a.href=url;a.download=filename;a.click();
+      URL.revokeObjectURL(url);
+      this.showToast('Downloaded '+rows.length+' rows — '+filename);
+    },
+    downloadPharmacyDetailCSV(){
+      if(!this.selectedPharmacy)return;
+      const h=['pharmacy_id','pharmacy_name','sku','product_name','class','lead_time','stock','min_stock','max_stock','replenish_qty','replenish_amount','l7d_flag','l7d_underestimate_flag','l30d_flag','plano_qty','plano_stock_ratio','plano_floor_applied','hold_to_plano_applied','l7d_sales','l30d_sales','mean','std','forecast','buffer'];
+      const rows=this.filteredDetailOrders.map(r=>[r.pharmacyId,r.pharmacyName,r.productCode,this.productName(r.productCode),r.abcxyz,r.leadTime,(r.onHand+r.inTransit),r.minStock,r.maxStock,r.st==='ordered'&&r.replenishValue>0?r.replenishValue:0,r.orderValue,r.l7dFlag?'yes':'no',r.l7dUnderFlag?'yes':'no',r.l30dFlag?'yes':'no',isNaN(r.planoUnitQty)?'':Math.round(r.planoUnitQty*r.conversionFactor),r.planoStockRatio!=null?r.planoStockRatio.toFixed(2):'',r.planoUnitGapApplied?'yes':'no',r.holdToPlanoApplied?'yes':'no',r.l7dSales,r.l30dSales||0,Number(r.meanQty).toFixed(2),Number(r.stdQty).toFixed(2),Number(r.forecastQty).toFixed(2),r.bufferStock]);
+      this._downloadTable('pharmacy_'+this.selectedPharmacy.id+'_'+this.filterDate+'.csv',h,rows);
+    },
+    downloadProductDetailCSV(){
+      if(!this.selectedProduct)return;
+      const h=['sku','product_name','pharmacy_id','pharmacy_name','class','lead_time','stock','min_stock','max_stock','replenish_qty','replenish_amount','l7d_flag','l7d_underestimate_flag','l30d_flag','plano_qty','plano_stock_ratio','plano_floor_applied','hold_to_plano_applied','l7d_sales','l30d_sales','mean','std','forecast','buffer'];
+      const rows=this.filteredProductDetailOrders.map(r=>[r.productCode,this.productName(r.productCode),r.pharmacyId,r.pharmacyName,r.abcxyz,r.leadTime,(r.onHand+r.inTransit),r.minStock,r.maxStock,r.st==='ordered'&&r.replenishValue>0?r.replenishValue:0,r.orderValue,r.l7dFlag?'yes':'no',r.l7dUnderFlag?'yes':'no',r.l30dFlag?'yes':'no',isNaN(r.planoUnitQty)?'':Math.round(r.planoUnitQty*r.conversionFactor),r.planoStockRatio!=null?r.planoStockRatio.toFixed(2):'',r.planoUnitGapApplied?'yes':'no',r.holdToPlanoApplied?'yes':'no',r.l7dSales,r.l30dSales||0,Number(r.meanQty).toFixed(2),Number(r.stdQty).toFixed(2),Number(r.forecastQty).toFixed(2),r.bufferStock]);
+      this._downloadTable('product_'+this.selectedProduct.sku+'_'+this.filterDate+'.csv',h,rows);
+    },
+    downloadProductViewCSV(){
+      const h=['sku','product_name','class','l7d_sales','replenish_qty','pharmacy_count','flagged'];
+      const rows=this.filteredSkuView.map(s=>[s.sku,this.productName(s.sku),s.abcxyz,s.l7d,s.replenishQty,s.pharmacyCount,s.flagged?'yes':'no']);
+      this._downloadTable('product_view_'+this.filterDate+'.csv',h,rows);
+    },
+    downloadPharmacyViewCSV(){
+      const h=['pharmacy_id','pharmacy_name','unique_skus','order_value','flag_count','top_class'];
+      const rows=this.pharmacySummary.map(p=>[p.id,p.name,p.orderedSkus,p.value,p.flagCount,p.topClass]);
+      this._downloadTable('pharmacy_view_'+this.filterDate+'.csv',h,rows);
+    },
+    loadPharmaciesFromStore(){
+      // The pharmacy list now comes from data/store.csv instead of a hardcoded array — so a
+      // pharmacy that exists in the real data (e.g. 14000 "Mas Mansyur") shows up here as soon as
+      // it's added to store.csv, with no separate dashboard edit needed.
+      fetch('./data/store.csv')
+        .then(r=>r.text())
+        .then(text=>{
+          if(!text||!window.Papa)return;
+          Papa.parse(text,{header:true,skipEmptyLines:true,complete:(res)=>{
+            if(!res.data)return;
+            const seen=new Set();
+            const list=[];
+            res.data.forEach(row=>{
+              const id=String(row.pharmacy_id||'').trim();
+              if(!id||seen.has(id))return;
+              seen.add(id);
+              const trigger=String(row.replenishment_trigger||row['Replenishment Trigger']||'yes').trim().toLowerCase();
+              list.push({id,name:String(row.pharmacy_name||('PHB '+id)).trim(),active:trigger!=='no'});
+            });
+            list.sort((a,b)=>parseInt(a.id)-parseInt(b.id));
+            this.pharmacies=list;
+            // If replenishment data already loaded before this fetch resolved (race between this
+            // and the "just ran" reload path in init()), re-sync against the real order rows —
+            // that's more authoritative than store.csv's trigger column alone.
+            this._syncPharmacyActiveFromOrders();
+          }});
+        }).catch(()=>{});
+    },
+    _syncPharmacyActiveFromOrders(){
+      if(!this.orders.length||!this.pharmacies.length)return;
+      const idsInData=new Set(this.orders.map(r=>r.pharmacyId));
+      this.pharmacies.forEach(p=>{p.active=idsInData.has(p.id);});
+    },
+    _recordRunSuccess(durationLabel){
+      const now=new Date();
+      const todayStr=now.toISOString().slice(0,10);
+      const seq=this.runHistory.length+1;
+      const cycleCode='cyc-'+todayStr.replace(/-/g,'')+'-'+String(seq).padStart(3,'0');
+      this.lastRun={time:'Just now',date:todayStr,cycleId:cycleCode};
+      this.runHistory.unshift({id:seq,cycleId:cycleCode,by:'manual',startedAt:todayStr+' '+now.toTimeString().slice(0,5),duration:durationLabel,status:'success'});
+      this.runStatus='success';
+    },
+    triggerRun(){
+      // This used to be a client-side illusion: re-parse the SAME already-loaded static
+      // window.ORDERING_DATA with a fake 5s delay, discovering nothing new and discarding any
+      // in-browser LT/Qty edits. It now actually calls run_csv_replenish.py through a small local
+      // server (dashboard_server.py) and reloads with genuinely fresh output when it's done.
+      if(this.runStatus==='running')return;
+      this.runStatus='running';
+
+      // Same CSV the "Download LT Overrides" button produces — sent to the server instead of
+      // downloaded, so edits made this session (across any pharmacy) are merged into
+      // data/lt_override.csv and actually feed the next run, not silently dropped.
+      //
+      // Filters/sends savedLeadTime (confirmed via each row's Save LT button), not the live
+      // leadTime — clicking Run Replenishment must not silently sweep up whatever position the
+      // +/- stepper happens to be sitting at on an unsaved row.
+      const edited=this.orders.filter(r=>r.origLeadTime!=null && r.savedLeadTime!==r.origLeadTime);
+      const stamp=new Date().toISOString().slice(0,19).replace('T',' ');
+      const header=['pharmacy_id','item_code','lead_time','updated_by','updated_at','reason'];
+      const rows=edited.map(r=>[r.pharmacyId,r.productCode,r.savedLeadTime,'dashboard_user',stamp,'Manual LT override via dashboard']);
+      const csvText=edited.length?[header,...rows].map(r=>r.join(',')).join('\n'):'';
+
+      fetch('/api/run',{method:'POST',headers:{'Content-Type':'text/csv'},body:csvText})
+        .then(async r=>{
+          // Read the body even on a non-2xx response — the server always sends JSON with the
+          // real error/stderr, and discarding that in favor of just the HTTP status was hiding
+          // the actual cause behind a useless "responded 500".
+          const payload=await r.json().catch(()=>({ok:false,error:'server responded '+r.status+' with a non-JSON body'}));
+          if(!r.ok && payload.ok===undefined) payload.ok=false;
+          return payload;
+        })
+        .then(payload=>{
+          if(!payload.ok){
+            this.runStatus='failed';
+            this.showToast('Pipeline failed: '+(payload.error||payload.stderr||'check the server console'));
+            return;
+          }
+          // The pipeline just regenerated data/ordering_data.js on disk for real. A full navigation
+          // is the reliable way to pick up the fresh <script src> (mutating window.location alone
+          // doesn't re-execute an already-parsed script tag) — the sessionStorage flag lets init()
+          // render the result immediately post-reload instead of sitting idle.
+          sessionStorage.setItem('replenJustRan', JSON.stringify({overrideRows:payload.overrideRows, duration:payload.duration}));
+          location.href = location.pathname + '?t=' + Date.now();
+        })
+        .catch(err=>{
+          this.runStatus='failed';
+          this.showToast('Could not run the pipeline — make sure dashboard_server.py is running (not plain http.server). '+err.message);
+        });
+    },
+    showToast(msg){this.toast={show:true,msg};setTimeout(()=>this.toast.show=false,3000);},
+    // Generic "save immediately" call — every Control Center Add/Remove used to only mutate an
+    // in-memory array (splice/push), showing a "saved" toast that lied: nothing ever reached
+    // disk, so a refresh or the next real run silently lost the edit. This sends the FULL current
+    // list (not a diff — these lists ARE the source of truth once loaded) for a full overwrite.
+    saveList(file, fields, rows){
+      return fetch('/api/save-list',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({file,fields,rows})})
+        .then(r=>r.json())
+        .then(payload=>{
+          if(!payload.ok){
+            this.showToast('Save failed for '+file+': '+(payload.error||'unknown error')+' — make sure dashboard_server.py is running');
+          }
+          return payload;
+        })
+        .catch(err=>{
+          this.showToast('Could not reach the server to save '+file+' — is dashboard_server.py running?');
+        });
+    },
+    _saveHoldRules(){
+      const rows=this.holdRules.map(r=>({sku:r.sku,type:r.type,applied_to:r.scope==='all'?'All':r.pharmacies}));
+      this.saveList('hold.csv',['sku','type','applied_to'],rows);
+    },
+    _saveHoldPlanoRules(){
+      const rows=this.holdPlanoRules.map(r=>({sku:r.sku,type:'Hold',applied_to:r.scope==='all'?'All':r.pharmacies}));
+      this.saveList('hold_to_plano.csv',['sku','type','applied_to'],rows);
+    },
+    _saveConfigRules(){
+      const rows=this.configRules.map(r=>({category:r.category,lead_time:r.leadTime,tools:r.mode,applied_to:r.scope==='specific'?r.pharmacies:''}));
+      this.saveList('config.csv',['category','lead_time','tools','applied_to'],rows);
+    },
+    _saveAdditionalOrders(){
+      const stamp=new Date().toISOString().slice(0,19).replace('T',' ');
+      const rows=this.additionalOrders.map(r=>({pharmacy_id:r.pharmacy,item_code:r.sku,qty:r.qty,added_by:'dashboard_user',added_at:stamp,reason:'Manual additional order via dashboard'}));
+      this.saveList('additional_orders.csv',['pharmacy_id','item_code','qty','added_by','added_at','reason'],rows);
+    },
+    savePharmacies(){
+      const rows=this.pharmacies.map(p=>({pharmacy_id:p.id,pharmacy_name:p.name,'Replenishment Trigger':p.active?'Yes':'No',replenishment_trigger:p.active?'Yes':'No'}));
+      this.saveList('store.csv',['pharmacy_id','pharmacy_name','Replenishment Trigger','replenishment_trigger'],rows);
+    },
+    addHoldRule(){if(!this.newHold.sku.trim())return;this.holdRules.push({...this.newHold});this.newHold={sku:'',type:'hold',scope:'all',pharmacies:''};this._saveHoldRules();this.showToast('Hold rule saved');},
+    addHoldPlanoRule(){if(!this.newHoldPlano.sku.trim())return;this.holdPlanoRules.push({...this.newHoldPlano});this.newHoldPlano={sku:'',scope:'all',pharmacies:''};this._saveHoldPlanoRules();this.showToast('Rule saved');},
+    addConfig(){this.configRules.push({...this.newConfig});this.newConfig={category:'AX',leadTime:'1.0',mode:'max',scope:'all',pharmacies:''};this._saveConfigRules();this.showToast('Config saved');},
+    addAdditional(){if(!this.newAdd.sku.trim()||!this.newAdd.qty)return;this.additionalOrders.push({...this.newAdd});this.newAdd={pharmacy:'14001',sku:'',qty:''};this._saveAdditionalOrders();this.showToast('Order saved');},
+    loadCSVFile(event){
+      const file=event.target.files[0];
+      if(!file)return;
+      this.showToast('Parsing '+file.name+'...');
+      if(window.Papa){
+        Papa.parse(file,{
+          header:true,
+          skipEmptyLines:true,
+          complete:(results)=>{
+            this.processLoadedCSV(results.data);
+            event.target.value='';
+          },
+          error:(err)=>{
+            this.showToast('Error: '+err.message);
+          }
+        });
+      }
+    },
+    processLoadedCSV(rows){
+      if(!rows||rows.length===0)return;
+      const parsedOrders=[];
+      const storeNames={};
+      this.pharmacies.forEach(p=>storeNames[p.id]=p.name);
+      const Z_MAP={'AX':1.88,'AY':1.65,'AZ':1.48,'BX':1.34,'BY':1.28,'BZ':1.23,'CX':1.04,'CY':0.84,'CZ':0.67,'DX':0.58,'DY':0.58,'DZ':0.58,'EX':0.52,'EY':0.52,'EZ':0.52};
+
+      rows.forEach(r=>{
+        const pId=String(r.pharmacy_id||r.Pharmacy_ID||'').trim();
+        let pName=(r.pharmacy_name && String(r.pharmacy_name).trim()!=='NaN') ? String(r.pharmacy_name).trim() : (storeNames[pId] || ('PHB '+pId));
+        const itemCode=String(r.item_code||r.sku||r.sku_code||'').trim();
+        if(!pId||!itemCode)return;
+
+        const l7d=parseFloat(r.l7d_sales)||0;
+        const l30d=parseFloat(r.l30d_sales)||0;
+        const onHand=parseFloat(r.total_qty)||0;
+        const inTransit=parseFloat(r.in_transit_qty)||0;
+        const convFactor=parseFloat(r.conversion_factor)||1.0;
+        const price=parseFloat(r.price)||0;
+        const cls=String(r.abc_xyz||'AX').trim().toUpperCase();
+        const ltVal=parseFloat(r.lead_time)||1.0;
+        const bufVal=parseInt(r.buffer_stock)||0;
+        const minVal=parseInt(r.minimum_stock)||0;
+        const maxVal=parseInt(r.maximum_stock)||0;
+
+        // Replen = the IDEAL/requested world (before TMP warehouse allocation) — what the formula
+        // says is needed, from stock+transit+forecast alone. This is what recalcRow()/stepLT()
+        // already compute when you edit LT (they have no TMP logic at all), so these shared field
+        // names now consistently mean "ideal" everywhere EXCEPT the Orders page (which needs the
+        // separate final* fields below, since it must keep showing what will actually ship).
+        const idealQty=parseFloat(r.ordered_qty_requested)||0;
+        const replenVal=idealQty*convFactor; // sales units
+        const orderVal=idealQty*price;
+        const totalPos=replenVal+onHand+inTransit;
+        const l7dRatio=l7d>0 ? (totalPos/l7d) : 0;
+        const l30dRatio=l30d>0 ? (totalPos/l30d) : 0;
+        const l7dFlag=l7d>0 && l7dRatio>1.30;
+        // Opposite-direction signal from l7dFlag: position sits at LESS than 30% of L7D sales —
+        // barely any cover relative to actual recent sell-through, a possible demand underestimate
+        // / stockout risk rather than the overstock risk l7dFlag (red) already covers.
+        const l7dUnderFlag=l7d>0 && l7dRatio<0.30;
+        const l30dFlag=l30d>0 && l30dRatio>1.00;
+        const st=idealQty>0?'ordered':(onHand>maxVal?'overstock':'no_need');
+
+        // Orders page = the FINAL world (after TMP allocation, hold-to-plano, everything) — what
+        // will actually ship. Same math as before this Replen/ideal split existed; only renamed.
+        const finalQty=parseFloat(r.ordered_qty_final)||0;
+        const finalStatusStr=String(r.final_status||r.replenish_qty||'').trim();
+        const finalIsOrdered=finalQty>0||(!isNaN(parseFloat(finalStatusStr))&&parseFloat(finalStatusStr)>0);
+        const finalOrderVal=parseFloat(r.total_order_val)||(finalQty*price);
+        const finalTotalPos=parseFloat(r.total_position)||(finalQty*convFactor+onHand+inTransit);
+        const finalL7dRatio=l7d>0 ? (finalTotalPos/l7d) : 0;
+        const finalL30dRatio=l30d>0 ? (finalTotalPos/l30d) : 0;
+        const finalSt=finalIsOrdered?'ordered':(finalStatusStr.toLowerCase().includes('overstock')?'overstock':'no_need');
+        const finalFlagged=l7d>0 && finalL7dRatio>1.30;
+
+        parsedOrders.push({
+          id:pId+'_'+itemCode,pharmacyId:pId,pharmacyName:pName,productCode:itemCode,abcxyz:cls,
+          meanQty:parseFloat(r.forecast_qty)||0,stdQty:parseFloat(r.std_qty)||0,
+          zVal:parseFloat(r.z_value)||Z_MAP[cls]||1.88,forecastQty:parseFloat(r.forecast_qty)||0,
+          l7dSales:l7d,l30dSales:l30d,totalPosition:totalPos,l7dRatio:l7dRatio.toFixed(2),l30dRatio:l30dRatio.toFixed(2),
+          // savedLeadTime = the last CONFIRMED value (via the row's Save button) — starts equal to
+          // origLeadTime (nothing confirmed yet). leadTime is the LIVE value the +/- stepper edits
+          // and recalcRow() reads, so on-screen numbers still update instantly on every click; but
+          // triggerRun()/downloadLtOverrides() read savedLeadTime instead, so an LT change only
+          // actually queues for the next Run/export once its row's Save button has been clicked —
+          // not on every up/down tick.
+          l7dFlag,l7dUnderFlag,l30dFlag,leadTime:ltVal,origLeadTime:ltVal,savedLeadTime:ltVal,
+          bufferStock:bufVal,origBuffer:bufVal,
+          minStock:minVal,origMin:minVal,
+          maxStock:maxVal,origMax:maxVal,
+          onHand:onHand,inTransit:inTransit,
+          replenishValue:replenVal,origReplenishVal:replenVal,
+          orderedQty:idealQty,origOrderedQty:idealQty,
+          conversionFactor:convFactor,
+          unitPrice:price,orderValue:orderVal,origOrderVal:orderVal,flagged:l7dFlag,
+          st,
+          // Orders-page-only final-world fields — keep these separate from the ideal ones above.
+          finalOrderedQty:finalQty,finalOrderValue:finalOrderVal,finalSt,finalFlagged,
+          finalStatusRaw:finalStatusStr,scmIno:String(r.is_additional_external||'No').trim().toLowerCase()==='no',
+          planoUnitGapApplied:!!r.plano_unit_gap_applied,holdToPlanoApplied:!!r.hold_to_plano_applied,
+          // planoUnitQty is in ORDERING units (boxes) straight from plano.csv — NaN when this SKU
+          // isn't on the planogram at all. planoStockRatio comes pre-computed from the server
+          // (apply_plano_stock_ratio_gate — effective_qty / (plano_unit_qty * conversion_factor)),
+          // kept as-is rather than re-derived here so the displayed ratio always matches exactly
+          // what the pipeline used to decide whether to suppress the order.
+          planoUnitQty:parseFloat(r.plano_unit_qty),
+          planoStockRatio:(r.plano_stock_ratio!=null&&r.plano_stock_ratio!=='')?parseFloat(r.plano_stock_ratio):null
+        });
+      });
+
+
+      this.orders=parsedOrders;
+      // Sync the Active/Inactive toggle to reality instead of a hardcoded guess: the pipeline
+      // (run_csv_replenish.py) now actually excludes pharmacies store.csv marks as not-replenished
+      // before it calculates anything, so a pharmacy with zero rows in this load genuinely wasn't
+      // included in the run — mark it inactive. One with rows is genuinely active. Manually
+      // toggling a pharmacy in Pharmacy Settings still overrides this until the next real load.
+      this._syncPharmacyActiveFromOrders();
+      // Keep the cached per-pharmacy slice in sync if a pharmacy detail view is open during reload
+      this.selectedPharmacyOrders=this.selectedPharmacy?parsedOrders.filter(r=>r.pharmacyId===this.selectedPharmacy.id):[];
+      // Same for the per-product cache if a product detail view is open during reload
+      this.selectedProductOrders=this.selectedProduct?parsedOrders.filter(r=>r.productCode===this.selectedProduct.sku):[];
+      this.kpi.totalRows=parsedOrders.length;
+      this.kpi.orderedSkus=new Set(parsedOrders.filter(o=>o.st==='ordered').map(o=>o.productCode)).size;
+      this.kpi.totalSkus=new Set(parsedOrders.map(o=>o.productCode)).size;
+      this.kpi.totalValue=parsedOrders.filter(o=>o.st==='ordered').reduce((sum,o)=>sum+o.orderValue,0);
+      this.showToast('Loaded '+parsedOrders.length+' real SKU rows from CSV!');
+    },
+
+    importCSV(event,target){
+
+      const file=event.target.files[0];if(!file)return;
+      const reader=new FileReader();
+      reader.onload=(e)=>{
+        const lines=e.target.result.split('\n').filter(l=>l.trim());
+        if(lines.length<2){this.showToast('CSV needs header + 1 row');return;}
+        const headers=lines[0].toLowerCase().split(',').map(h=>h.trim().replace(/"/g,''));
+        let imported=0;
+        for(let i=1;i<lines.length;i++){
+          const vals=lines[i].split(',').map(v=>v.trim().replace(/"/g,''));
+          const row={};headers.forEach((h,idx)=>row[h]=vals[idx]||'');
+          if(target==='hold'){const sku=row.sku||'';if(!sku)continue;const scope=(row.applied_to||'all').toLowerCase()==='all'?'all':'specific';this.holdRules.push({sku,type:row.type||'hold',scope,pharmacies:scope==='specific'?row.applied_to:''});imported++;}
+        }
+        this.showToast('Imported '+imported+' rows');event.target.value='';
+      };reader.readAsText(file);
+    },
+    downloadTemplate(target){
+      const t={hold:'sku,type,applied_to\nID100035-1C,hold to stock-out,all\n',holdplano:'sku,applied_to\nID102089-1,all\n',config:'category,lead_time,mode,applied_to\nAX,1.5,max,all\n',additional:'pharmacy_id,sku,qty\n14001,ID100035-1C,20\n'};
+      const blob=new Blob([t[target]],{type:'text/csv'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='template_'+target+'.csv';a.click();URL.revokeObjectURL(url);
+    }
+  }}
+  </script>
+</body>
+</html>
+

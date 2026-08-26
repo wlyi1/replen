@@ -1,0 +1,241 @@
+// ============================================================
+// Inofarma Replenishment System — Database Schema
+// Version: 1.0  |  Last Updated: 2026-08-03
+// Datasets: dw_replenishment_dev · dw_replenishment_prod
+//
+// Paste this into: https://dbdiagram.io
+// ============================================================
+
+
+// ============================================================
+// LAYER 1 — DIMENSION TABLES
+// Master / reference data
+// ============================================================
+
+Table dim_pharmacy [note: 'dataset: dw_replenishment_prod | replaces: phb_aktif'] {
+  pharmacy_id              String    [pk, not null, note: 'Unique pharmacy identifier e.g. 14001']
+  pharmacy_name            String    [not null,     note: 'Display name of the pharmacy']
+  is_replenishment_active  Boolean   [not null,     note: 'Replaces replenishment_trigger = yes. Controls ACTIVE_PHB filter in pipeline']
+  created_at               Timestamp [not null]
+  updated_at               Timestamp [null]
+}
+
+Table dim_product [note: 'dataset: dw_replenishment_prod | new table — no previous equivalent'] {
+  product_code   String    [pk, not null, note: 'Unique SKU identifier']
+  product_name   String    [null,         note: 'Human-readable product name']
+  created_at     Timestamp [not null]
+  updated_at     Timestamp [null]
+}
+
+Table dim_product_price [note: 'dataset: dw_replenishment_dev | replaces: pricelist'] {
+  product_code   String    [not null, ref: > dim_product.product_code, note: 'FK to dim_product']
+  unit_price     Numeric   [not null, note: 'Price per ordering unit post-conversion']
+  effective_date Date      [null,     note: 'Date from which this price is valid']
+  created_at     Timestamp [not null]
+
+  indexes {
+    (product_code, effective_date) [pk]
+  }
+}
+
+Table dim_unit_conversion [note: 'dataset: dw_replenishment_dev | replaces: conversion_staging'] {
+  product_code        String    [pk, not null, ref: > dim_product.product_code]
+  conversion_factor   Float     [not null, note: 'Sales units per ordering unit e.g. 10 strips per box. Formula: ordered_qty = CEIL(replenish_qty / factor)']
+  created_at          Timestamp [not null]
+}
+
+
+// ============================================================
+// LAYER 2 — FACT & STAGING TABLES
+// Transactional & positional data
+// ============================================================
+
+Table fact_weekly_sales [note: 'dataset: dw_replenishment_dev | replaces: mart_windows_7_sales | rolling 7-week pre-aggregated mart'] {
+  pharmacy_id    String    [not null, ref: > dim_pharmacy.pharmacy_id]
+  pharmacy_name  String    [null,     note: 'Denormalized for convenience']
+  product_code   String    [not null, ref: > dim_product.product_code]
+  week_index     Integer   [null,     note: 'Relative week number 1=oldest N=most recent']
+  sales_qty      Float     [not null, note: 'Units sold this week in sales unit. Replaces: qty']
+  net_revenue    Float     [not null, note: 'Net sales revenue. Used in ABC ranking. Replaces: net_amount']
+  recorded_at    Timestamp [null]
+
+  indexes {
+    (pharmacy_id, product_code, week_index) [pk]
+  }
+}
+
+Table fact_stock_position [note: 'dataset: dw_replenishment_dev | replaces: stok_so_staging_old | current stock snapshot'] {
+  pharmacy_id      String  [not null, ref: > dim_pharmacy.pharmacy_id]
+  pharmacy_name    String  [null]
+  product_code     String  [not null, ref: > dim_product.product_code]
+  on_hand_qty      Float   [not null, note: 'Physical stock in sales unit. Replaces: total_qty']
+  in_transit_qty   Float   [not null, note: 'Open PO quantity not yet received in sales unit']
+  effective_qty    Float   [not null, note: 'Computed: on_hand_qty + in_transit_qty']
+  follow_planogram String  [null,     note: 'yes or no or NULL. Replaces: plano_follow']
+  snapshot_date    Date    [null]
+
+  indexes {
+    (pharmacy_id, product_code) [pk]
+  }
+}
+
+Table stg_tmp_warehouse_stock [note: 'dataset: dw_replenishment_dev | replaces: tmp_stock | TMP central warehouse snapshot'] {
+  product_code   String    [pk, not null, ref: > dim_product.product_code]
+  available_qty  Float     [null, note: 'Total available stock at TMP warehouse. Replaces: tmp_qty']
+  item_status    String    [null, note: 'active or not_active or discontinue. Replaces: tmp_status']
+  snapshot_date  Date      [null]
+}
+
+Table ref_planogram [note: 'dataset: dw_replenishment_prod | replaces: gsheet_plano_qty_initial_results'] {
+  pharmacy_id        String    [not null, ref: > dim_pharmacy.pharmacy_id]
+  pharmacy_name      String    [null]
+  product_code       String    [not null, ref: > dim_product.product_code]
+  planogram_unit_qty Float     [not null, note: 'Target shelf qty in ordering unit post-conversion. Replaces: unit_qty']
+  follow_planogram   String    [null,     note: 'no = exclude from planogram logic']
+  item_status        String    [null,     note: 'active or not_active or discontinue. Replaces: status']
+  updated_at         Timestamp [null]
+
+  indexes {
+    (pharmacy_id, product_code) [pk]
+  }
+}
+
+
+// ============================================================
+// LAYER 3 — CONTROL & CONFIGURATION TABLES
+// Business rules managed via Control Center UI
+// ============================================================
+
+Table ctrl_hold_stockout_rule [note: 'dataset: dw_replenishment_prod | replaces: gsheet hold_product_stock_out'] {
+  rule_id                  String    [pk, not null, note: 'Auto-generated UUID']
+  product_code             String    [not null, ref: > dim_product.product_code, note: 'CSV column: sku']
+  rule_type                String    [not null, note: 'hold or hold_to_stockout. CSV column: type']
+  scope_type               String    [not null, note: 'all or specific. CSV column: applied_to']
+  applicable_pharmacy_ids  String    [null,     note: 'Comma-separated pharmacy IDs when scope_type=specific']
+  created_at               Timestamp [not null]
+}
+
+Table ctrl_hold_to_planogram_rule [note: 'dataset: dw_replenishment_prod | replaces: gsheet hold_to_plano'] {
+  rule_id                  String    [pk, not null, note: 'Auto-generated UUID']
+  product_code             String    [not null, ref: > dim_product.product_code, note: 'CSV column: sku']
+  rule_type                String    [not null, note: 'Any non-null value activates override']
+  scope_type               String    [not null, note: 'all or specific. CSV column: applied_to']
+  applicable_pharmacy_ids  String    [null]
+  created_at               Timestamp [not null]
+}
+
+Table ctrl_replenishment_config [note: 'dataset: dw_replenishment_prod | replaces: gsheet special_control'] {
+  config_id                String    [pk, not null, note: 'Auto-generated UUID']
+  abc_xyz_category         String    [not null, note: 'e.g. AX BZ. CSV column: category']
+  lead_time_weeks          Float     [not null, note: 'Default 1.0. Used in: CEIL(Z x sigma x sqrt(LT)). CSV column: lead_time']
+  replenishment_mode       String    [not null, note: 'max = order to max stock | min = order to min stock. CSV column: tools']
+  scope_type               String    [not null, note: 'all or specific. CSV column: applied_to']
+  applicable_pharmacy_ids  String    [null]
+  created_at               Timestamp [not null]
+}
+
+Table ctrl_additional_order [note: 'dataset: dw_replenishment_prod | replaces: gsheet additional_order'] {
+  order_id        String    [pk, not null, note: 'Auto-generated UUID']
+  pharmacy_id     String    [not null, ref: > dim_pharmacy.pharmacy_id, note: 'CSV column: pharmacy_id']
+  product_code    String    [not null, ref: > dim_product.product_code,  note: 'CSV column: sku']
+  additional_qty  Float     [not null, note: 'Ordering units to add on top of calculated replenishment. CSV column: qty']
+  created_at      Timestamp [not null]
+}
+
+
+// ============================================================
+// LAYER 4 — MART TABLES (Pipeline Output)
+// Written by the pipeline. Read by the dashboard API.
+// ============================================================
+
+Table mart_abc_xyz_classification [note: 'dataset: dw_replenishment_prod | new — previously computed in-memory only not persisted'] {
+  pharmacy_id              String    [not null, ref: > dim_pharmacy.pharmacy_id]
+  product_code             String    [not null, ref: > dim_product.product_code]
+  cycle_id                 String    [not null, note: 'Run batch identifier']
+  total_revenue            Float     [not null]
+  total_qty_sold           Float     [not null]
+  revenue_rank             Integer   [not null, note: 'Rank within pharmacy 1=highest revenue']
+  cumulative_revenue_pct   Float     [not null, note: 'Cumulative pct of pharmacy revenue up to this SKU']
+  abcde_category           String    [not null, note: 'A or B or C or D or E']
+  mean_weekly_qty          Float     [null]
+  std_weekly_qty           Float     [null]
+  coefficient_of_variation Float     [null,     note: 'std / mean. NULL if only 1 data point']
+  xyz_class                String    [not null, note: 'X CV<0.5 | Y CV<1.0 | Z CV>=1.0 | Unknown']
+  abc_xyz_class            String    [not null, note: 'Combined e.g. AX BZ CY']
+  computed_at              Timestamp [not null]
+
+  indexes {
+    (pharmacy_id, product_code, cycle_id) [pk]
+  }
+}
+
+Table mart_replenishment_order [note: 'dataset: dw_replenishment_prod | replaces: ordering_df previously not persisted | PRIMARY dashboard table'] {
+  order_row_id                  String    [pk, not null,  note: 'Auto-generated UUID']
+  cycle_id                      String    [not null,      note: 'Links to mart_abc_xyz_classification.cycle_id']
+  computed_at                   Timestamp [not null]
+  pharmacy_id                   String    [not null, ref: > dim_pharmacy.pharmacy_id]
+  pharmacy_name                 String    [null]
+  product_code                  String    [not null, ref: > dim_product.product_code]
+
+  abc_xyz_class                 String    [null, note: 'e.g. AX BZ. Replaces: abc_xyz']
+  abcde_category                String    [null]
+  xyz_class                     String    [null]
+  cumulative_revenue_pct        Float     [null]
+  pog_status                    String    [null, note: 'POG Y or No Need to Replenish. Replaces: pog_status_global']
+
+  forecast_method               String    [null, note: 'SES or Croston or None']
+  forecast_weekly_qty           Float     [null, note: 'Forecasted demand next week in sales unit. Replaces: forecast_qty']
+  std_weekly_qty                Float     [null]
+  coefficient_of_variation      Float     [null, note: 'Replaces: cv']
+  z_value                       Float     [null, note: 'Service level Z-score for this ABC-XYZ class']
+  lead_time_weeks               Float     [null]
+  buffer_stock_qty              Integer   [null, note: 'Safety stock: CEIL(Z x sigma x sqrt(LT)). Replaces: buffer_stock']
+  minimum_stock_qty             Integer   [null, note: 'Reorder point: CEIL(forecast + buffer). Replaces: minimum_stock']
+  maximum_stock_qty             Integer   [null, note: 'Order-up-to: CEIL(min + forecast). Replaces: maximum_stock']
+
+  on_hand_qty                   Float     [null, note: 'Physical stock in sales unit. Replaces: total_qty']
+  in_transit_qty                Float     [null]
+  effective_qty                 Float     [null, note: 'on_hand_qty + in_transit_qty']
+
+  planogram_unit_qty            Float     [null]
+  planogram_target_gap          Float     [null, note: 'CEIL(planogram_unit_qty - effective_qty / conversion_factor)']
+  planogram_gap_applied         Boolean   [not null, note: 'Replaces: plano_unit_gap_applied']
+
+  replenishment_mode            String    [null, note: 'max or min']
+  replenishment_qty_raw         Float     [null, note: 'Pre-conversion qty in sales unit. Replaces: replenish_value']
+  replenishment_status          String    [null, note: 'Overstock or No need to replenish or No Follow or Hold or Hold to Zero or Manually Review']
+
+  conversion_factor             Float     [null]
+  ordered_qty_converted         Float     [null, note: 'CEIL(replenishment_qty_raw / conversion_factor). Replaces: converted_qty']
+
+  tmp_available_qty             Float     [null]
+  tmp_item_status               String    [null, note: 'active or not_active or discontinue']
+
+  ordered_qty_final             Float     [not null, note: 'Final qty after TMP + all overrides in ordering unit']
+  unit_price                    Float     [null]
+  total_order_value             Float     [null,     note: 'ordered_qty_final x unit_price. Replaces: total_order_val']
+
+  status_before_planogram       String    [null]
+  final_status                  String    [not null, note: 'Numeric qty string or status label']
+  final_status_after_allocation String    [null]
+
+  hold_to_planogram_applied     Boolean   [not null, note: 'Replaces: hold_to_plano_applied']
+  is_additional_external_order  Boolean   [not null, note: 'Replaces: is_additional_external']
+}
+
+
+// ============================================================
+// JOB STATE TABLE
+// Replaces Redis — used for status polling by dashboard
+// ============================================================
+
+Table pipeline_run_log [note: 'dataset: dw_replenishment_prod | replaces Redis for job state polling'] {
+  run_id        String    [pk, not null, note: 'Auto-generated UUID']
+  cycle_id      String    [null,         note: 'Links to mart_replenishment_order.cycle_id']
+  status        String    [not null,     note: 'running or success or failed']
+  triggered_by  String    [not null,     note: 'manual or scheduler']
+  started_at    Timestamp [not null]
+  completed_at  Timestamp [null]
+  duration_sec  Float     [null]
+  error_message String    [null]
+}
