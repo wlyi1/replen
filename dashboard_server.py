@@ -159,7 +159,14 @@ class Handler(SimpleHTTPRequestHandler):
 
 
 def main():
-    port = int(sys.argv[1]) if len(sys.argv) > 1 else 8000
+    # Cloud Run (and most PaaS hosts) inject the port to bind via $PORT and expect
+    # the container to listen there — a hardcoded/argv-only port causes the health
+    # check to time out waiting on the port the platform actually forwards traffic
+    # to. Prefer an explicit argv[1] for local runs, then $PORT, then 8000.
+    if len(sys.argv) > 1:
+        port = int(sys.argv[1])
+    else:
+        port = int(os.environ.get("PORT", 8000))
     handler = functools.partial(Handler, directory=ROOT)
     server = ThreadingHTTPServer(("0.0.0.0", port), handler)
     print(f"Serving {ROOT}")
